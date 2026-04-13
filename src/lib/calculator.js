@@ -211,14 +211,20 @@ export function calcScore(answers, computed) {
   let riskScore = 0;    // 25점
 
   // === 소득 점수 (30점) ===
-  if (computed.disposableIncome > 0) incomeScore += 15;
-  if (answers.incomeType === '급여') incomeScore += 10;
-  else if (answers.incomeType === '영업사업') incomeScore += 7;
-  else if (answers.incomeType === '연금') incomeScore += 8;
-  // 가용소득이 총채무의 0.5% 이상
-  if (computed.disposableIncome > 0 && answers.totalDebt > 0) {
-    if (computed.disposableIncome >= answers.totalDebt * 0.005) incomeScore += 5;
-    else if (computed.disposableIncome >= answers.totalDebt * 0.002) incomeScore += 3;
+  if (computed.disposableIncome > 0) {
+    incomeScore += 15;
+    // 소득 유형 점수 (가용소득이 있을 때만 정상 부여)
+    if (answers.incomeType === '급여') incomeScore += 10;
+    else if (answers.incomeType === '영업사업') incomeScore += 7;
+    else if (answers.incomeType === '연금') incomeScore += 8;
+    // 가용소득이 총채무의 0.5% 이상
+    if (answers.totalDebt > 0) {
+      if (computed.disposableIncome >= answers.totalDebt * 0.005) incomeScore += 5;
+      else if (computed.disposableIncome >= answers.totalDebt * 0.002) incomeScore += 3;
+    }
+  } else if (answers.incomeType !== '무직') {
+    // 소득은 있지만 가용소득이 0인 경우: 소득 유형 점수만 축소 부여
+    incomeScore += 3;
   }
 
   // === 채무 점수 (25점) ===
@@ -366,6 +372,34 @@ export function calculateDiagnosis(answers) {
   }
   if (answers.recentDebtRatio === '30% 이상') {
     risks.push({ type: 'warning', message: '최근 6개월 신규 채무 비율이 30% 이상으로 높습니다', detail: '의도적 채무 증가로 판단될 수 있어 소명이 필요합니다' });
+  }
+
+  // 가용소득 부족 경고
+  if (disposableIncome === 0 && answers.incomeType !== '무직') {
+    const monthlyPayment = defaultPeriod.monthlyPayment;
+    if (monthlyPayment > 0) {
+      risks.push({
+        type: 'error',
+        message: `월 소득(${formatKoreanMoney(
+          answers.incomeType === '영업사업'
+            ? Math.max(answers.monthlyRevenue - answers.monthlyExpense, 0)
+            : answers.monthlyIncome || 0
+        )})이 생계비(${formatKoreanMoney(livingExpense)})보다 적어 가용소득이 0원입니다`,
+        detail: `현재 월 변제금 ${formatKoreanMoney(monthlyPayment)}은 재산(청산가치) 기반 최소변제금이며, 실제 이 금액을 매월 납부할 소득이 부족합니다. 소득이 늘거나 생계비가 줄어야 법원 인가 가능성이 높아집니다.`,
+      });
+    }
+  }
+
+  // 청산가치가 변제금을 결정하는 경우 안내
+  if (disposableIncome < defaultPeriod.monthlyPayment && liquidationValue > 0 && disposableIncome >= 0) {
+    const minFromLiquidation = Math.ceil(liquidationValue / 36 / 1000) * 1000;
+    if (defaultPeriod.monthlyPayment >= minFromLiquidation && minFromLiquidation > disposableIncome) {
+      risks.push({
+        type: 'warning',
+        message: `보유 재산(청산가치 ${formatKoreanMoney(liquidationValue)})이 월 변제금을 높이고 있습니다`,
+        detail: '개인회생에서는 총 변제금이 청산가치 이상이어야 합니다. 재산이 많을수록 변제금이 높아지고 탕감액은 줄어듭니다.',
+      });
+    }
   }
 
   // 긍정 요소
