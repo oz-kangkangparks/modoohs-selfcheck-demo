@@ -1,8 +1,6 @@
-// ※ 데모 전용 API Key — 실서비스에서는 반드시 백엔드 프록시를 통해 호출해야 합니다.
-// ※ 실서비스용 API Key는 별도 발급하여 환경변수로 관리해야 합니다.
-const DEMO_API_KEY = 'AIzaSyBXKDBPrTvHPw00urURIKL6VQX-my4sljk';
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${DEMO_API_KEY}`;
+const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${API_KEY}`;
 
 const SYSTEM_PROMPT = `당신은 개인회생 자가진단만을 전문으로 돕는 '모두의회생' 도우미 AI 실장입니다. 다음 원칙을 절대적으로 따르세요:
 
