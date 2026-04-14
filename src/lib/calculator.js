@@ -20,6 +20,14 @@ export const MEDIAN_INCOME_2026 = {
   6: 8_064_805,
 };
 
+/** 가구원 수별 월 생계비 (원/월) — 법원 실무 기준 */
+export const LIVING_EXPENSE_TABLE = {
+  1: 1_538_543,
+  2: 2_519_575,
+  3: 3_215_422,
+  4: 3_896_843,
+};
+
 /** 부양가족 수에 따른 중위소득 반환 (6인 초과 시 1인당 증가분 적용) */
 export function getMedianIncome(familyCount) {
   if (familyCount <= 0) return MEDIAN_INCOME_2026[1];
@@ -72,8 +80,11 @@ export function calcFamilyCount(dependents = 0) {
  * @returns {number} 월 생계비
  */
 export function calcLivingExpense(familyCount) {
-  const median = getMedianIncome(familyCount);
-  return Math.floor(median * LIVING_EXPENSE_RATIO);
+  if (familyCount <= 0) return LIVING_EXPENSE_TABLE[1];
+  if (familyCount <= 4) return LIVING_EXPENSE_TABLE[familyCount];
+  // 5인 이상: 4인 기준 + (초과인원 × 3인→4인 증가분)
+  const perPerson = LIVING_EXPENSE_TABLE[4] - LIVING_EXPENSE_TABLE[3];
+  return LIVING_EXPENSE_TABLE[4] + (familyCount - 4) * perPerson;
 }
 
 /**

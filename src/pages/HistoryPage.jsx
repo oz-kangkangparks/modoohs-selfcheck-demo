@@ -66,7 +66,7 @@ export default function HistoryPage() {
         <div className="app-header__progress" style={{ justifyContent: 'center' }}>
           <span className="app-header__step" style={{ fontSize: 15, fontWeight: 700 }}>진단 이력</span>
         </div>
-        <button className="btn-ghost" onClick={() => navigate('/')}>새로 진단하기</button>
+        <button className="btn-secondary" style={{ height: 32, fontSize: 12, padding: '0 12px' }} onClick={() => navigate('/')}>새로 진단하기</button>
       </header>
 
       <div className="page-wrap">
@@ -83,7 +83,7 @@ export default function HistoryPage() {
           <>
             {/* 비교 버튼 */}
             {completedItems.length >= 2 && (
-              <div style={{ marginBottom: 16 }}>
+              <div style={{ marginTop: 16, marginBottom: 16 }}>
                 <button
                   className={compareMode ? 'btn-primary' : 'btn-secondary'}
                   style={{ flex: 'none', height: 36, fontSize: 13 }}
@@ -175,12 +175,12 @@ export default function HistoryPage() {
 
                 {!compareMode && (
                   <div style={{ display: 'flex', gap: 8, paddingTop: 12, borderTop: '1px solid var(--c-border-light)', marginTop: 12 }}>
-                    <button className="btn-ghost" style={{ flex: 1 }} onClick={() => handleRetest(item)}>
+                    <button className="btn-secondary" style={{ flex: 1, height: 40, fontSize: 13 }} onClick={() => handleRetest(item)}>
                       수정하여 재진단
                     </button>
                     <button
-                      className="btn-ghost"
-                      style={{ color: 'var(--c-danger)' }}
+                      className="btn-secondary"
+                      style={{ height: 40, fontSize: 13, color: 'var(--c-danger)', borderColor: 'var(--c-danger)' }}
                       onClick={() => setDeleteConfirm(item.id)}
                     >
                       삭제

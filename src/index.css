@@ -960,7 +960,7 @@ body::after {
 
 /* History & Experts */
 .history-page, .experts-page { background: var(--c-bg); min-height: 100vh; }
-.history-list { padding: 0 24px 40px; display: flex; flex-direction: column; gap: 16px;}
+.history-list { padding: 0; display: flex; flex-direction: column; gap: 16px; margin-bottom: 40px; }
 .history-card {
   background: var(--c-surface);
   padding: 24px;
