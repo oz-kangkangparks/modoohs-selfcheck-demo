@@ -23,8 +23,8 @@ export default function ResultPage() {
   const a = data.answers;
   const gradeColorMap = {
     success: '#10b981',
-    warning: '#f59e0b',
-    caution: '#f59e0b',
+    warning: '#eab308',
+    caution: '#e8890c',
     danger: '#ef4444',
   };
   const gradeColor = gradeColorMap[r.score.gradeColor] || gradeColorMap.warning;
@@ -38,13 +38,15 @@ export default function ResultPage() {
           {r.score.grade}
         </h1>
         <p style={{ fontSize: 15, opacity: 0.9, marginBottom: 32, zIndex: 1, position: 'relative' }}>
-          {r.score.total >= 80
-            ? '회생 절차를 통해 빚을 크게 줄이실 수 있어요.'
-            : r.score.total >= 60
-              ? '조건에 따라 회생이 가능하며, 전문가 상담을 권합니다.'
-              : r.score.total >= 40
-                ? '일부 보완이 필요하지만, 전문가와 함께 방법을 찾을 수 있어요.'
-                : '현재 조건으로는 회생이 어려울 수 있습니다. 전문가 상담이 필요합니다.'}
+          {r.score.grade === '회생 실익 없음'
+            ? '현재 보유 재산 또는 소득으로 채무 상환이 가능한 상황입니다.'
+            : r.score.total >= 80
+              ? '회생 절차를 통해 빚을 크게 줄이실 수 있어요.'
+              : r.score.total >= 60
+                ? '조건에 따라 회생이 가능하며, 전문가 상담을 권합니다.'
+                : r.score.total >= 40
+                  ? '일부 보완이 필요하지만, 전문가와 함께 방법을 찾을 수 있어요.'
+                  : '현재 조건으로는 회생이 어려울 수 있습니다. 전문가 상담이 필요합니다.'}
         </p>
 
         <div className="result-score-ring">
@@ -286,13 +288,15 @@ export default function ResultPage() {
         <div className="card" style={{ borderLeft: `6px solid ${gradeColor}` }}>
           <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>분석 리포트</h2>
           <p style={{ fontSize: 14, color: 'var(--c-text-secondary)', lineHeight: 1.7 }}>
-            {r.score.total >= 80
-              ? `입력하신 상황을 분석한 결과, 회생 가능성이 높습니다. 매월 ${formatKoreanMoney(r.defaultPeriod.monthlyPayment)}씩 36개월간 납입하면, 이자 전액과 원금의 상당 부분을 면책받을 수 있습니다.`
-              : r.score.total >= 60
-                ? `입력하신 상황을 분석한 결과, 조건부로 회생이 가능합니다. 다만 일부 보완이 필요할 수 있으므로 전문가 상담을 통해 정확한 가능 여부를 확인하시기 바랍니다.`
-                : r.score.total >= 40
-                  ? `입력하신 상황을 분석한 결과, 추가 검토가 필요합니다. 현재 조건만으로는 확정하기 어려우니, 전문가 상담을 통해 구체적인 방법을 확인해보세요.`
-                  : `입력하신 상황을 분석한 결과, 현재 조건으로는 회생 진행이 어려울 수 있습니다. 전문가와 상담하여 다른 채무 해결 방법을 함께 알아보시기 바랍니다.`}
+            {r.score.grade === '회생 실익 없음'
+              ? `입력하신 상황을 분석한 결과, 보유 재산이나 소득으로 채무 상환이 충분히 가능하여 회생 절차의 실익이 없습니다. 회생 신청 시 법원에서 기각될 가능성이 높으며, 일반 상환이나 채무 조정을 먼저 검토하시기 바랍니다.`
+              : r.score.total >= 80
+                ? `입력하신 상황을 분석한 결과, 회생 가능성이 높습니다. 매월 ${formatKoreanMoney(r.defaultPeriod.monthlyPayment)}씩 36개월간 납입하면, 이자 전액과 원금의 상당 부분을 면책받을 수 있습니다.`
+                : r.score.total >= 60
+                  ? `입력하신 상황을 분석한 결과, 조건부로 회생이 가능합니다. 다만 일부 보완이 필요할 수 있으므로 전문가 상담을 통해 정확한 가능 여부를 확인하시기 바랍니다.`
+                  : r.score.total >= 40
+                    ? `입력하신 상황을 분석한 결과, 추가 검토가 필요합니다. 현재 조건만으로는 확정하기 어려우니, 전문가 상담을 통해 구체적인 방법을 확인해보세요.`
+                    : `입력하신 상황을 분석한 결과, 현재 조건으로는 회생 진행이 어려울 수 있습니다. 전문가와 상담하여 다른 채무 해결 방법을 함께 알아보시기 바랍니다.`}
           </p>
           <p style={{ fontSize: 12, color: 'var(--c-text-tertiary)', marginTop: 12, lineHeight: 1.6 }}>
             본 결과는 입력하신 정보를 바탕으로 한 참고용 자가진단이며, 법적 효력이 없습니다. 정확한 판단은 반드시 전문가 상담을 통해 확인하세요.
@@ -331,7 +335,7 @@ export default function ResultPage() {
         <div className="result-cta-section">
           <h2 className="result-cta-section__title">전문가 상담이 필요하신가요?</h2>
           <p style={{ fontSize: 15, opacity: 0.9 }}>모두의회생 등록 전문가에게 무료 상담받으세요</p>
-          <button className="btn-primary" onClick={() => navigate('/experts')} style={{ width: '100%', maxWidth: 300, margin: '20px auto 0' }}>
+          <button className="btn-primary" onClick={() => window.open('https://modoohs.com/experts', '_blank')} style={{ width: '100%', maxWidth: 300, margin: '20px auto 0' }}>
             상담받기
           </button>
         </div>

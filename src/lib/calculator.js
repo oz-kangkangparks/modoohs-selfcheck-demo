@@ -203,6 +203,10 @@ export function checkPresentValue(monthlyPayment, months, liquidationValue) {
 
 /**
  * 회생 가능성 점수 산정 (100점 만점)
+ *
+ * 점수가 높을수록 회생이 "적합하고 유리"하다는 의미.
+ * 회생이 불필요한 경우(재산으로 충분히 상환 가능, 소득으로 단기 상환 가능)에는
+ * 점수가 낮아야 한다.
  */
 export function calcScore(answers, computed) {
   let incomeScore = 0;  // 30점
@@ -210,70 +214,91 @@ export function calcScore(answers, computed) {
   let assetScore = 0;   // 20점
   let riskScore = 0;    // 25점
 
+  const totalDebt = answers.totalDebt || 0;
+
   // === 소득 점수 (30점) ===
+  // 소득이 있어야 변제 능력 인정, 하지만 소득이 너무 높으면 회생 불필요
   if (computed.disposableIncome > 0) {
-    incomeScore += 15;
-    // 소득 유형 점수 (가용소득이 있을 때만 정상 부여)
-    if (answers.incomeType === '급여') incomeScore += 10;
-    else if (answers.incomeType === '영업사업') incomeScore += 7;
-    else if (answers.incomeType === '연금') incomeScore += 8;
-    // 가용소득이 총채무의 0.5% 이상
-    if (answers.totalDebt > 0) {
-      if (computed.disposableIncome >= answers.totalDebt * 0.005) incomeScore += 5;
-      else if (computed.disposableIncome >= answers.totalDebt * 0.002) incomeScore += 3;
+    // 가용소득으로 2년(24개월) 이내 전액 상환 가능 → 회생 불필요
+    if (totalDebt > 0 && computed.disposableIncome * 24 >= totalDebt) {
+      incomeScore += 5; // 소득 있지만 회생 필요성 낮음
+    } else {
+      incomeScore += 15;
+      if (answers.incomeType === '급여') incomeScore += 10;
+      else if (answers.incomeType === '영업사업') incomeScore += 7;
+      else if (answers.incomeType === '연금') incomeScore += 8;
+      if (totalDebt > 0) {
+        if (computed.disposableIncome >= totalDebt * 0.005) incomeScore += 5;
+        else if (computed.disposableIncome >= totalDebt * 0.002) incomeScore += 3;
+      }
     }
   } else if (answers.incomeType !== '무직') {
-    // 소득은 있지만 가용소득이 0인 경우: 소득 유형 점수만 축소 부여
     incomeScore += 3;
   }
 
   // === 채무 점수 (25점) ===
-  const debtCheck = checkDebtLimit(answers.totalDebt, answers.securedDebt || 0);
+  const debtCheck = checkDebtLimit(totalDebt, answers.securedDebt || 0);
   if (debtCheck.pass) {
     debtScore += 15;
-    // 무담보 비율이 높을수록(담보 적을수록) 유리
-    const unsecuredRatio = 1 - ((answers.securedDebt || 0) / Math.max(answers.totalDebt, 1));
+    const unsecuredRatio = 1 - ((answers.securedDebt || 0) / Math.max(totalDebt, 1));
     debtScore += Math.round(unsecuredRatio * 10);
   }
 
   // === 재산 점수 (20점) ===
-  if (computed.liquidationValue <= computed.totalPayment36) {
-    assetScore += 15;
-  } else if (computed.liquidationValue <= computed.totalPayment60) {
-    assetScore += 10;
+  // 핵심: 청산가치(재산)가 채무보다 크면 회생 실익이 없으므로 점수 하락
+  if (totalDebt > 0 && computed.liquidationValue >= totalDebt) {
+    // 재산만으로 채무 전액 상환 가능 → 회생 실익 없음
+    const assetDebtRatio = computed.liquidationValue / totalDebt;
+    if (assetDebtRatio >= 3) assetScore += 0;       // 재산이 채무의 3배 이상
+    else if (assetDebtRatio >= 1.5) assetScore += 3; // 1.5배 이상
+    else assetScore += 5;                            // 1~1.5배
+  } else if (computed.liquidationValue <= EXEMPT_ASSETS.deposit + EXEMPT_ASSETS.insurance) {
+    // 면제재산 범위 내 → 가장 유리
+    assetScore += 20;
+  } else if (totalDebt > 0 && computed.liquidationValue < totalDebt * 0.3) {
+    assetScore += 17;
+  } else if (totalDebt > 0 && computed.liquidationValue < totalDebt * 0.7) {
+    assetScore += 12;
   } else {
-    assetScore += 5;
-  }
-  // 면제재산 범위 내
-  if (computed.liquidationValue <= EXEMPT_ASSETS.deposit + EXEMPT_ASSETS.insurance) {
-    assetScore += 5;
+    assetScore += 7;
   }
 
   // === 위험도 점수 (25점) ===
-  // 면책이력
   if (answers.pastHistory === '없음') riskScore += 10;
   else if (answers.pastHistory === '회생면책(5년이상)' || answers.pastHistory === '파산면책') riskScore += 6;
   else if (answers.pastHistory === '회생면책(5년이내)') riskScore += 2;
-  // 현재 진행중/기각 → 0점
 
-  // 채무 원인
   const causes = answers.debtCauses || [];
   const riskyCount = causes.filter(c => ['도박', '투자(주식·코인)'].includes(c)).length;
   if (riskyCount === 0) riskScore += 8;
   else if (riskyCount === 1 && causes.length > 1) riskScore += 4;
 
-  // 최근 신규채무
   if (!answers.recentDebtRatio || answers.recentDebtRatio === '없음') riskScore += 7;
   else if (answers.recentDebtRatio === '10% 미만') riskScore += 5;
   else if (answers.recentDebtRatio === '10~30%') riskScore += 2;
 
   const total = incomeScore + debtScore + assetScore + riskScore;
 
+  // 탕감율이 0%이면 회생 실익 없음 → 등급 강제 하향
+  const reliefRate = computed.reliefRate || 0;
   let grade, gradeColor;
-  if (total >= 80) { grade = '회생 가능성 높음'; gradeColor = 'success'; }
-  else if (total >= 60) { grade = '회생 가능 (조건부)'; gradeColor = 'warning'; }
-  else if (total >= 40) { grade = '추가 검토 필요'; gradeColor = 'caution'; }
-  else { grade = '회생 어려움'; gradeColor = 'danger'; }
+
+  if (reliefRate <= 0) {
+    grade = '회생 실익 없음';
+    gradeColor = 'danger';
+  } else if (total >= 80) {
+    grade = '회생 가능성 높음';
+    gradeColor = 'success';
+  } else if (total >= 60) {
+    grade = '회생 가능 (조건부)';
+    gradeColor = 'warning';
+  } else if (total >= 40) {
+    grade = '추가 검토 필요';
+    gradeColor = 'caution';
+  } else {
+    grade = '회생 어려움';
+    gradeColor = 'danger';
+  }
 
   return {
     total,
@@ -342,11 +367,30 @@ export function calculateDiagnosis(answers) {
     liquidationValue,
     totalPayment36,
     totalPayment60,
+    reliefRate: defaultPeriod.reliefRate,
   });
 
   // 위험 요소 수집
   const risks = [];
   const positives = [];
+
+  // 회생 실익 없음 경고 (재산이 채무보다 큰 경우)
+  if (liquidationValue >= answers.totalDebt && answers.totalDebt > 0) {
+    risks.push({
+      type: 'error',
+      message: `보유 재산(${formatKoreanMoney(liquidationValue)})이 총 채무(${formatKoreanMoney(answers.totalDebt)})보다 많아 회생 실익이 없습니다`,
+      detail: '재산을 처분하면 채무를 충분히 상환할 수 있으므로, 법원에서 회생 신청이 기각될 가능성이 높습니다.',
+    });
+  }
+
+  // 소득만으로 단기 상환 가능한 경우
+  if (disposableIncome > 0 && answers.totalDebt > 0 && disposableIncome * 24 >= answers.totalDebt) {
+    risks.push({
+      type: 'warning',
+      message: `월 가용소득(${formatKoreanMoney(disposableIncome)})으로 2년 이내 전액 상환이 가능합니다`,
+      detail: '채무 상환 능력이 충분하여 회생 없이도 해결 가능한 상황입니다. 일반 상환 또는 채무 조정을 먼저 검토해보세요.',
+    });
+  }
 
   if (!debtLimit.pass) {
     risks.push({ type: 'error', message: debtLimit.message, detail: debtLimit.alternative });

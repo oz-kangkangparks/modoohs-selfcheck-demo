@@ -177,9 +177,6 @@ export default function DiagnosisPage() {
   return (
     <>
       <header className="app-header">
-        <button className="app-header__back" onClick={handlePrev}>
-          &#8592;
-        </button>
         <div className="app-header__progress">
           <span className="app-header__step">
             <em>{progress.current}</em> / {progress.total}
