@@ -82,10 +82,10 @@ export default function DiagnosisPage() {
   }, [state.answers, state.currentStep, state.chatHistory, state.diagnosisId, dispatch]);
 
   useEffect(() => {
-    if (Object.keys(state.answers).length > 0) {
+    if (Object.keys(state.answers).length > 0 && state.status !== 'completed') {
       autoSave();
     }
-  }, [state.answers, state.chatHistory, autoSave]);
+  }, [state.answers, state.chatHistory, state.status, autoSave]);
 
   function getAnswerValue() {
     if (!question) return undefined;
