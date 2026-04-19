@@ -1,8 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAllDiagnoses } from '../lib/db';
-import { formatKoreanMoney } from '../lib/calculator';
+import { formatKoreanMoney, VERDICT } from '../lib/calculator';
 import { useDiagnosis } from '../hooks/useDiagnosis';
+
+const VERDICT_LABEL = {
+  [VERDICT.POSSIBLE]: '회생 가능',
+  [VERDICT.IMPOSSIBLE]: '회생 불가',
+  [VERDICT.CONSULT]: '전문가 상담 필요',
+};
+
+const VERDICT_COLOR_CLASS = {
+  [VERDICT.POSSIBLE]: 'result-grade-badge--success',
+  [VERDICT.IMPOSSIBLE]: 'result-grade-badge--danger',
+  [VERDICT.CONSULT]: 'result-grade-badge--warning',
+};
 
 export default function HomePage() {
   const navigate = useNavigate();
@@ -74,13 +86,11 @@ export default function HomePage() {
         </div>
       </div>
 
-      {recentHistory && (
+      {recentHistory && recentHistory.result && (
         <div style={{ padding: '0 24px', marginBottom: 40 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ fontSize: 18, fontWeight: 800 }}>이전 내 기록 이어보기</div>
-            <button className="btn-ghost" onClick={() => navigate('/history')}>
-              전체 보기 &gt;
-            </button>
+            <button className="btn-ghost" onClick={() => navigate('/history')}>전체 보기 &gt;</button>
           </div>
           <div className="history-card" onClick={handleContinue} style={{ cursor: 'pointer' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -89,17 +99,22 @@ export default function HomePage() {
                   {new Date(recentHistory.createdAt).toLocaleDateString('ko-KR')}
                 </div>
                 <div style={{ fontSize: 18, fontWeight: 800 }}>
-                  예상 가능성 {recentHistory.result?.score?.total}점
+                  {VERDICT_LABEL[recentHistory.result.verdict] || '판정 미지정'}
                 </div>
               </div>
               <div className="history-card__result">
-                <span className="result-grade-badge--warning" style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6 }}>{recentHistory.result?.score?.grade}</span>
+                <span
+                  className={VERDICT_COLOR_CLASS[recentHistory.result.verdict] || 'result-grade-badge--warning'}
+                  style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6 }}
+                >
+                  {VERDICT_LABEL[recentHistory.result.verdict] || '—'}
+                </span>
               </div>
             </div>
             <div className="history-card__amount" style={{ borderTop: '1px solid var(--c-border-light)', paddingTop: 16, marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="history-card__amount-label" style={{ margin: 0, fontSize: 14 }}>예상 탕감액</div>
+              <div className="history-card__amount-label" style={{ margin: 0, fontSize: 14 }}>예상 면책(탕감)</div>
               <div className="history-card__amount-value" style={{ fontSize: 24 }}>
-                {formatKoreanMoney(recentHistory.result?.defaultPeriod?.reliefAmount || 0)}
+                {formatKoreanMoney(recentHistory.result.paymentPlan?.exemption || 0)}
               </div>
             </div>
           </div>

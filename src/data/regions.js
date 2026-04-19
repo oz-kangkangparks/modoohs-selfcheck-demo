@@ -1,3 +1,18 @@
+/**
+ * 지역 데이터 + 관할법원 자동 매핑 + 주거비 지역 그룹 + 면제재산 지역별 한도
+ *
+ * 근거: 자가진단_계산로직_정리.md
+ *   - 섹션 2-4 (주거비 지역 그룹 1~4)
+ *   - 섹션 3-5 (전세보증금 면제재산 지역별)
+ *   - 섹션 5-2 (관할법원 17개 광역시도 매핑, 2026.4 기준)
+ *
+ * 회생법원 6곳 (2026.03 기준): 서울·수원·부산 (기존) + 대전·대구·광주 (2026.3.1 신설)
+ * 회생법원 미설치: 강원·인천·경기북부
+ */
+
+// ============================================================
+// 1. 시·도 / 시·군·구 목록 (드롭다운용)
+// ============================================================
 export const regions = {
   '서울특별시': ['강남구', '강동구', '강북구', '강서구', '관악구', '광진구', '구로구', '금천구', '노원구', '도봉구', '동대문구', '동작구', '마포구', '서대문구', '서초구', '성동구', '성북구', '송파구', '양천구', '영등포구', '용산구', '은평구', '종로구', '중구', '중랑구'],
   '부산광역시': ['강서구', '금정구', '기장군', '남구', '동구', '동래구', '부산진구', '북구', '사상구', '사하구', '서구', '수영구', '연제구', '영도구', '중구', '해운대구'],
@@ -17,3 +32,200 @@ export const regions = {
   '경상남도': ['거제시', '거창군', '고성군', '김해시', '남해군', '밀양시', '사천시', '산청군', '양산시', '의령군', '진주시', '창녕군', '창원시', '통영시', '하동군', '함안군', '함양군', '합천군'],
   '제주특별자치도': ['서귀포시', '제주시'],
 };
+
+// ============================================================
+// 2. 관할 법원 자동 매핑
+// ============================================================
+
+/**
+ * 경기 북부 시·군 (의정부지방법원 관할, 회생법원 없음)
+ * 나머지 경기도 시·군은 수원지방법원·수원회생법원 관할
+ */
+const GYEONGGI_NORTH = new Set([
+  '고양시', '의정부시', '동두천시', '구리시', '남양주시',
+  '파주시', '양주시', '포천시', '연천군', '가평군',
+]);
+
+/**
+ * 시·도별 기본 관할 법원 정보
+ * 각 항목: { rehab(회생법원) | null, district(지방법원) | null, recommended: 'rehab' | 'district' }
+ *  - recommended: 채무자에게 유리한 법원 자동 선택용
+ */
+const COURT_DEFAULT = {
+  '서울특별시':       { rehab: '서울회생법원', district: null, recommended: 'rehab', note: '서울은 서울회생법원 전속 관할 (지법 선택 불가)' },
+  '부산광역시':       { rehab: '부산회생법원', district: '부산지방법원', recommended: 'rehab' },
+  '대구광역시':       { rehab: '대구회생법원', district: '대구지방법원', recommended: 'rehab', note: '대구회생법원 2026.3.1 신설' },
+  '광주광역시':       { rehab: '광주회생법원', district: '광주지방법원', recommended: 'rehab', note: '광주회생법원 2026.3.1 신설' },
+  '대전광역시':       { rehab: '대전회생법원', district: '대전지방법원', recommended: 'rehab', note: '대전회생법원 2026.3.1 신설' },
+  '울산광역시':       { rehab: '부산회생법원', district: '울산지방법원', recommended: 'rehab', note: '울산은 부산회생법원 중복관할' },
+  '인천광역시':       { rehab: null, district: '인천지방법원', recommended: 'district', note: '인천은 회생법원 미설치' },
+  '세종특별자치시':   { rehab: '대전회생법원', district: '대전지방법원', recommended: 'rehab', note: '세종엔 지법 없음 → 대전지법 관할' },
+  '충청북도':         { rehab: null, district: '청주지방법원', recommended: 'district', note: '회생법원 미설치' },
+  '충청남도':         { rehab: '대전회생법원', district: '대전지방법원', recommended: 'rehab', note: '금산군도 대전지법 관할' },
+  '전북특별자치도':   { rehab: '광주회생법원', district: '전주지방법원', recommended: 'rehab', note: '2026.3 중복관할 편입' },
+  '전라남도':         { rehab: '광주회생법원', district: '광주지방법원', recommended: 'rehab' },
+  '경상북도':         { rehab: '대구회생법원', district: '대구지방법원', recommended: 'rehab' },
+  '제주특별자치도':   { rehab: '광주회생법원', district: '제주지방법원', recommended: 'rehab', note: '2026.3 중복관할 편입' },
+};
+
+/**
+ * 거주지(시·도, 시·군·구) 기반 관할 법원 자동 판별
+ * @param {string} sido
+ * @param {string} sigungu
+ * @returns {{ rehab: string|null, district: string|null, recommended: 'rehab'|'district', note?: string, courtName: string }}
+ *   courtName: 자동 추천된 법원 이름 (recommended 기반)
+ */
+export function resolveCourt(sido, sigungu) {
+  let info;
+
+  // 경기도 — 북부(의정부) vs 남부(수원·수원회생) 분기
+  if (sido === '경기도') {
+    if (GYEONGGI_NORTH.has(sigungu)) {
+      info = { rehab: null, district: '의정부지방법원', recommended: 'district', note: '경기 북부 — 회생법원 미설치' };
+    } else {
+      info = { rehab: '수원회생법원', district: '수원지방법원', recommended: 'rehab' };
+    }
+  }
+  // 강원 — 철원군 예외 (의정부지법), 나머지는 춘천
+  else if (sido === '강원특별자치도') {
+    if (sigungu === '철원군') {
+      info = { rehab: null, district: '의정부지방법원', recommended: 'district', note: '강원이지만 의정부지법 관할' };
+    } else {
+      info = { rehab: null, district: '춘천지방법원', recommended: 'district', note: '강원 — 회생법원 미설치' };
+    }
+  }
+  // 경남 — 양산 예외 (울산지법), 나머지는 창원
+  else if (sido === '경상남도') {
+    if (sigungu === '양산시') {
+      info = { rehab: '부산회생법원', district: '울산지방법원', recommended: 'rehab', note: '양산 — 울산지법 또는 부산회생법원 선택 가능' };
+    } else {
+      info = { rehab: '부산회생법원', district: '창원지방법원', recommended: 'rehab' };
+    }
+  }
+  // 기본 테이블
+  else if (COURT_DEFAULT[sido]) {
+    info = { ...COURT_DEFAULT[sido] };
+  }
+  // 예상 못한 시·도 — fallback
+  else {
+    info = { rehab: null, district: null, recommended: 'district', note: '관할 미정' };
+  }
+
+  const courtName = info.recommended === 'rehab' ? (info.rehab || info.district || '미지정') : (info.district || info.rehab || '미지정');
+  return { ...info, courtName };
+}
+
+// ============================================================
+// 3. 주거비 지역 그룹 (1~4) — 월세 공제 한도
+// ============================================================
+
+/**
+ * 과밀억제권역에 해당하는 경기도 시 (인천 대부분은 과밀, 광역시지만 주거비는 그룹2)
+ * 수도권정비계획법상 과밀억제권역 기준을 법원 실무에 맞게 단순화
+ */
+const GYEONGGI_CONCENTRATED = new Set([
+  '고양시', '과천시', '광명시', '구리시', '군포시',
+  '남양주시', '부천시', '성남시', '수원시', '시흥시',
+  '안양시', '오산시', '의왕시', '의정부시', '하남시',
+]);
+
+/**
+ * 주거비 그룹 3 (광역시급 한도) — 경기도 내 추가 도시
+ * 자가진단_계산로직_정리.md 섹션 2-4(3): "광역시·안산·김포·광주(경기)·파주"
+ */
+const HOUSING_GROUP3_GYEONGGI = new Set([
+  '안산시', '김포시', '광주시', '파주시',
+]);
+
+/**
+ * 주거비 지역 그룹 판별 (1~4)
+ * @returns {1|2|3|4}
+ *   1: 서울특별시
+ *   2: 과밀억제권역(서울 제외) + 세종·용인·화성
+ *   3: 광역시(부산·대구·광주·대전·울산) + 안산·김포·광주(경기)·파주
+ *   4: 그 밖의 지역
+ */
+export function resolveHousingGroup(sido, sigungu) {
+  if (sido === '서울특별시') return 1;
+
+  // 그룹 2: 인천 전역 + 세종 + 경기 과밀억제권역 + 용인·화성
+  if (sido === '인천광역시') return 2;
+  if (sido === '세종특별자치시') return 2;
+  if (sido === '경기도') {
+    if (sigungu === '용인시' || sigungu === '화성시') return 2;
+    if (HOUSING_GROUP3_GYEONGGI.has(sigungu)) return 3;
+    if (GYEONGGI_CONCENTRATED.has(sigungu)) return 2;
+    return 4; // 경기 중 기타(안성·양평·여주·이천·평택·포천·연천·동두천 등)
+  }
+
+  // 그룹 3: 광역시(인천 제외, 서울 제외)
+  if (['부산광역시', '대구광역시', '광주광역시', '대전광역시', '울산광역시'].includes(sido)) {
+    return 3;
+  }
+
+  // 그 외 (강원·충북·충남·전북·전남·경북·경남·제주)
+  return 4;
+}
+
+/**
+ * 주거비 기준 포함분(최저생계비에 이미 포함된 주거비) 테이블 — 원/월
+ */
+const HOUSING_BASE_INCLUDED = {
+  1: 273861, 2: 448484, 3: 572345, 4: 693638, // 가구원 수 1~4
+};
+
+/**
+ * 추가 주거비 인정 한도 테이블 — 원/월
+ * [지역그룹][가구원 수]
+ */
+const HOUSING_ADDITIONAL_LIMIT = {
+  1: { 1: 589208, 2: 982013,  3: 1253955, 4: 1510789 }, // 서울
+  2: { 1: 430122, 2: 716869,  3: 915387,  4: 1102876 }, // 과밀억제·세종·용인·화성
+  3: { 1: 229791, 2: 382985,  3: 489042,  4: 589208  }, // 광역시·안산·김포·광주(경기)·파주
+  4: { 1: 176762, 2: 294604,  3: 376186,  4: 453237  }, // 그 밖
+};
+
+/**
+ * 가구원 수에 맞춘 기준 포함분 조회 (5인 이상은 4인 기준 유지 — 실무 보편)
+ */
+export function getHousingBaseIncluded(familyCount) {
+  const n = Math.max(1, Math.min(4, Math.round(familyCount)));
+  return HOUSING_BASE_INCLUDED[n];
+}
+
+/**
+ * 가구원 수 + 지역그룹에 맞춘 추가 인정 한도 조회
+ */
+export function getHousingAdditionalLimit(group, familyCount) {
+  const n = Math.max(1, Math.min(4, Math.round(familyCount)));
+  return HOUSING_ADDITIONAL_LIMIT[group][n];
+}
+
+// ============================================================
+// 4. 전세 면제재산 지역별 한도 (주택임대차보호법 최우선변제금)
+// ============================================================
+
+/**
+ * 자가진단_계산로직_정리.md 섹션 3-5
+ * 서울 5500만 / 과밀·세종·용인·화성 4800만 / 광역시·안산·김포·광주(경기)·파주 2800만 / 기타 2500만
+ */
+export function resolveJeonseExemption(sido, sigungu) {
+  if (sido === '서울특별시') return 55_000_000;
+
+  // 과밀억제권역급 (4800만)
+  if (sido === '세종특별자치시') return 48_000_000;
+  if (sido === '경기도') {
+    if (sigungu === '용인시' || sigungu === '화성시') return 48_000_000;
+    if (HOUSING_GROUP3_GYEONGGI.has(sigungu)) return 28_000_000;
+    if (GYEONGGI_CONCENTRATED.has(sigungu)) return 48_000_000;
+    return 25_000_000;
+  }
+
+  // 광역시 + 안산·김포·광주(경기)·파주 (2800만)
+  if (['부산광역시', '대구광역시', '광주광역시', '대전광역시', '울산광역시', '인천광역시'].includes(sido)) {
+    return 28_000_000;
+  }
+
+  // 그 외 (2500만)
+  return 25_000_000;
+}

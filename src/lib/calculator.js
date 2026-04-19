@@ -1,26 +1,30 @@
 /**
- * 모두의회생 자가진단 계산 엔진
+ * 모두의회생 자가진단 계산 엔진 (2026.04.17 회의 반영판)
  *
- * ※ 실제 구현 시 하드코딩된 기준 데이터(중위소득, 라이프니쯔 계수 등)는
- *    반드시 기준정보 DB에서 조회하도록 변경해야 합니다.
- *    현재는 데모 시연용으로 2026년 기준 데이터가 하드코딩되어 있습니다.
+ * 근거 문서: 자가진단_계산로직_정리.md
+ *   - 섹션 1  핵심 개념 3가지
+ *   - 섹션 2  가용소득 / 부양가족 자동 산정 / 월세 공제
+ *   - 섹션 3  청산가치 (부동산×0.7 / 예금·보험 250만 공제 / 질권설정 / 면제재산)
+ *   - 섹션 4  변제기간 산출 / 3-state 판정 / 24개월 특례
+ *   - 섹션 5  관할 법원 자동 판별
+ *
+ * ※ 모든 금액 입력·출력은 **원 단위**.
+ *   UI에서 만원 단위로 받는 경우 `manwonToWon()`으로 변환 후 전달할 것.
  */
 
-// ========================================================
-// 기준 데이터 (하드코딩 — 실서비스 시 DB에서 조회 필수)
-// ========================================================
+import {
+  resolveCourt,
+  resolveHousingGroup,
+  resolveJeonseExemption,
+  getHousingBaseIncluded,
+  getHousingAdditionalLimit,
+} from '../data/regions.js';
 
-/** 2026년 기준 중위소득 (원/월) */
-export const MEDIAN_INCOME_2026 = {
-  1: 2_392_013,
-  2: 3_932_218,
-  3: 5_025_353,
-  4: 6_097_773,
-  5: 7_108_718,
-  6: 8_064_805,
-};
+// ================================================================
+// 1. 기준 데이터 (2026년 법원 실무)
+// ================================================================
 
-/** 가구원 수별 월 생계비 (원/월) — 법원 실무 기준 */
+/** 2026년 가구원 수별 월 최저생계비 (원/월) — 섹션 2-1 */
 export const LIVING_EXPENSE_TABLE = {
   1: 1_538_543,
   2: 2_519_575,
@@ -28,510 +32,709 @@ export const LIVING_EXPENSE_TABLE = {
   4: 3_896_843,
 };
 
-/** 부양가족 수에 따른 중위소득 반환 (6인 초과 시 1인당 증가분 적용) */
-export function getMedianIncome(familyCount) {
-  if (familyCount <= 0) return MEDIAN_INCOME_2026[1];
-  if (familyCount <= 6) return MEDIAN_INCOME_2026[familyCount];
-  // 6인 초과: 6인 기준 + (초과인원 × 1인당 증가분)
-  const perPerson = MEDIAN_INCOME_2026[6] - MEDIAN_INCOME_2026[5];
-  return MEDIAN_INCOME_2026[6] + (familyCount - 6) * perPerson;
-}
+/** 압류금지채권 공제 한도 (원) — 민사집행법 제246조 / 섹션 3-6 */
+export const DEPOSIT_INSURANCE_EXEMPT = 2_500_000;
 
-/** 라이프니쯔 계수 (법정이율 5% 기준, 월 단위) */
-export function getLeibnizCoefficient(months) {
-  if (months <= 0) return 0;
-  const monthlyRate = 0.05 / 12;
-  // 연금현가계수 = (1 - (1+r)^-n) / r
-  return (1 - Math.pow(1 + monthlyRate, -months)) / monthlyRate;
-}
+/** 부동산 법원 환산 배율 — 섹션 3-1 */
+export const REAL_ESTATE_MULTIPLIER = 0.7;
 
-/** 개인회생 채무 한도 (채무자회생법 제579조, 2021.04.20 개정) */
-export const DEBT_LIMITS = {
-  unsecured: 1_000_000_000, // 무담보 10억
-  secured: 1_500_000_000,   // 담보 15억
-};
+/** 최소변제액 가산율 — 섹션 4 (청산가치 보장 원칙) */
+export const MIN_PAYMENT_MULTIPLIER = 1.1;
 
-/** 면제재산 한도 */
-export const EXEMPT_ASSETS = {
-  deposit: 2_500_000,   // 예금 면제 250만원
-  insurance: 2_500_000, // 보험 면제 250만원
-};
+/** 기본·최장 변제기간 (개월) */
+export const DEFAULT_PERIOD = 36;
+export const MAX_PERIOD = 60;
+export const SPECIAL_PERIOD = 24;
 
-/** 생계비 비율 */
-export const LIVING_EXPENSE_RATIO = 0.60; // 중위소득의 60%
+/** 24개월 특례 자격 코드 */
+export const SPECIAL_QUALS = new Set(['under30', 'over65', 'disabled', 'jeonse_victim']);
+
+/** 24개월 특례를 배제하는 채무 사용처 코드 */
+export const DISQUALIFYING_USAGES = new Set(['gambling', 'stocks', 'crypto']);
 
 
-// ========================================================
-// 계산 함수들
-// ========================================================
+// ================================================================
+// 2. 부양가족 자동 산정 (섹션 2-1-1)
+// ================================================================
 
 /**
- * 부양가족수 산정
- * - 본인 포함
- * - 입력된 부양가족수(본인 제외) + 1
+ * 결혼상태·배우자 소득·미성년 자녀·부모 부양 여부로 부양가족수 자동 산정
+ * 공동부양 원칙: 배우자 소득 있으면 자녀 × 0.5
+ *
+ * @returns {number} 본인 포함 부양가족 수 (소수점 가능)
  */
-export function calcFamilyCount(dependents = 0) {
-  return 1 + Math.max(0, dependents);
+export function calcFamilyCount({
+  maritalStatus,
+  spouseIncome,
+  minorChildren = 0,
+  dependentParents = 0,
+}) {
+  let count = 1; // 본인
+
+  // 배우자 점수
+  if (maritalStatus === '기혼') {
+    if (spouseIncome === 'no') count += 1; // 전액 부양
+    // spouseIncome === 'yes' → +0 (자립)
+  }
+
+  // 자녀 점수
+  const children = Math.max(0, Number(minorChildren) || 0);
+  if (maritalStatus === '기혼' && spouseIncome === 'yes') {
+    count += children * 0.5; // 공동부양
+  } else {
+    count += children; // 단독양육
+  }
+
+  // 부모 점수
+  count += Math.max(0, Number(dependentParents) || 0);
+
+  return count;
 }
 
+
+// ================================================================
+// 3. 최저생계비 (섹션 2-1, 소수점 선형보간 포함)
+// ================================================================
+
 /**
- * 생계비 산정
- * @param {number} familyCount - 부양가족수 (본인 포함)
- * @returns {number} 월 생계비
+ * 가구원 수(실수 허용)에 따른 월 최저생계비
+ * - 정수(1~4): 테이블 직조회
+ * - 소수(1.5, 2.5 등): 선형 보간
+ * - 4 초과: 3인→4인 증가분 × 초과인원 적용
  */
 export function calcLivingExpense(familyCount) {
-  if (familyCount <= 0) return LIVING_EXPENSE_TABLE[1];
-  if (familyCount <= 4) return LIVING_EXPENSE_TABLE[familyCount];
-  // 5인 이상: 4인 기준 + (초과인원 × 3인→4인 증가분)
-  const perPerson = LIVING_EXPENSE_TABLE[4] - LIVING_EXPENSE_TABLE[3];
-  return LIVING_EXPENSE_TABLE[4] + (familyCount - 4) * perPerson;
+  if (!familyCount || familyCount <= 1) return LIVING_EXPENSE_TABLE[1];
+
+  if (familyCount <= 4) {
+    const lo = Math.floor(familyCount);
+    const hi = Math.ceil(familyCount);
+    if (lo === hi) return LIVING_EXPENSE_TABLE[lo];
+    const ratio = familyCount - lo;
+    return Math.round(LIVING_EXPENSE_TABLE[lo] * (1 - ratio) + LIVING_EXPENSE_TABLE[hi] * ratio);
+  }
+
+  // 4인 초과: 4인값 + 초과 × (4인 - 3인) 증분
+  const delta = LIVING_EXPENSE_TABLE[4] - LIVING_EXPENSE_TABLE[3];
+  return Math.round(LIVING_EXPENSE_TABLE[4] + (familyCount - 4) * delta);
 }
 
-/**
- * 월 가용소득 산정
- * @param {object} params
- * @param {string} params.incomeType - 소득유형 (급여/영업사업/연금/무직)
- * @param {number} params.monthlyIncome - 월소득 (급여: 세전, 사업: 순소득)
- * @param {number} params.monthlyRevenue - 월매출 (영업소득자)
- * @param {number} params.monthlyExpense - 월경비 (영업소득자)
- * @param {number} params.familyCount - 부양가족수 (본인 포함)
- * @returns {number} 월 가용소득
- */
-export function calcDisposableIncome({ incomeType, monthlyIncome = 0, monthlyRevenue = 0, monthlyExpense = 0, familyCount }) {
-  let income = 0;
 
+// ================================================================
+// 4. 월세 추가 공제 (섹션 2-4, 담당자 지정 min/max 공식)
+// ================================================================
+
+/**
+ * 추가공제액 = min( max(0, 월세 − 기준포함분), 추가인정한도 )
+ * 지역은 resolveHousingGroup()으로 판별
+ */
+export function calcHousingDeduction({ housingType, monthlyRent, residenceSido, residenceSigungu, familyCount }) {
+  if (housingType !== '월세') return 0;
+  const rent = Number(monthlyRent) || 0;
+  if (rent <= 0) return 0;
+
+  const group = resolveHousingGroup(residenceSido, residenceSigungu);
+  const base = getHousingBaseIncluded(familyCount);
+  const limit = getHousingAdditionalLimit(group, familyCount);
+
+  const rawExcess = rent - base;
+  const positive = Math.max(0, rawExcess);
+  return Math.min(positive, limit);
+}
+
+
+// ================================================================
+// 5. 월 가용소득 (섹션 2)
+// ================================================================
+
+/**
+ * 월 가용소득 = 월소득 − 최저생계비 − 월세추가공제
+ * - 가용소득이 음수라도 **그대로 반환** (0 처리 금지 — 섹션 2-3)
+ */
+export function calcDisposableIncome({
+  incomeType,
+  monthlyIncome = 0,
+  monthlyRevenue = 0,
+  monthlyExpense = 0,
+  familyCount,
+  housingDeduction = 0,
+}) {
+  let income = 0;
   switch (incomeType) {
     case '급여':
     case '연금':
-      income = monthlyIncome;
+      income = Number(monthlyIncome) || 0;
       break;
     case '영업사업':
-      income = Math.max(monthlyRevenue - monthlyExpense, 0);
+      income = Math.max((Number(monthlyRevenue) || 0) - (Number(monthlyExpense) || 0), 0);
       break;
     case '무직':
-      income = 0;
-      break;
     default:
-      income = monthlyIncome;
+      income = 0;
   }
 
   const livingExpense = calcLivingExpense(familyCount);
-  return Math.max(income - livingExpense, 0);
+  return income - livingExpense - (housingDeduction || 0);
 }
 
-/**
- * 청산가치(재산 총액) 산정
- * @param {object} assets
- * @returns {number} 청산가치
- */
-export function calcLiquidationValue(assets = {}) {
-  const {
-    realEstateValue = 0,    // 부동산 시세
-    realEstateMortgage = 0, // 부동산 담보대출
-    vehicleValue = 0,       // 차량 가치
-    vehicleLoan = 0,        // 차량 담보대출
-    insuranceValue = 0,     // 보험 해약환급금
-    depositValue = 0,       // 예적금
-    otherAssets = 0,        // 기타자산
-  } = assets;
 
-  const realEstateNet = Math.max(realEstateValue - realEstateMortgage, 0);
-  const vehicleNet = Math.max(vehicleValue - vehicleLoan, 0);
-
-  const totalAssets = realEstateNet + vehicleNet + insuranceValue + depositValue + otherAssets;
-
-  // 면제재산 공제
-  const depositExempt = Math.min(depositValue, EXEMPT_ASSETS.deposit);
-  const insuranceExempt = Math.min(insuranceValue, EXEMPT_ASSETS.insurance);
-
-  return Math.max(totalAssets - depositExempt - insuranceExempt, 0);
-}
+// ================================================================
+// 6. 청산가치 — 자산별 산정 (섹션 3)
+// ================================================================
 
 /**
- * 월 변제금 결정
- * @param {number} disposableIncome - 월 가용소득
- * @param {number} liquidationValue - 청산가치
- * @param {number} months - 변제기간 (개월)
- * @returns {number} 월 변제금
- */
-export function calcMonthlyPayment(disposableIncome, liquidationValue, months) {
-  // 기본: 월 가용소득 (천원 단위 올림)
-  let payment = Math.ceil(disposableIncome / 1000) * 1000;
-
-  // 최소변제금 체크: 총변제금 >= 청산가치
-  const minMonthly = Math.ceil(liquidationValue / months / 1000) * 1000;
-  payment = Math.max(payment, minMonthly);
-
-  return payment;
-}
-
-/**
- * 무담보/담보 채무 분리
- */
-export function splitDebt(totalDebt, securedDebt = 0) {
-  const secured = Math.min(securedDebt, totalDebt);
-  const unsecured = totalDebt - secured;
-  return { unsecured, secured };
-}
-
-/**
- * 채무 한도 체크
- * @returns {{ pass: boolean, message: string, alternative: string }}
- */
-export function checkDebtLimit(totalDebt, securedDebt = 0) {
-  const { unsecured, secured } = splitDebt(totalDebt, securedDebt);
-
-  if (unsecured > DEBT_LIMITS.unsecured) {
-    return {
-      pass: false,
-      message: `무담보 채무(${formatKoreanMoney(unsecured)})가 10억원을 초과합니다.`,
-      alternative: '일반회생 절차를 검토해보세요.',
-    };
-  }
-  if (secured > DEBT_LIMITS.secured) {
-    return {
-      pass: false,
-      message: `담보 채무(${formatKoreanMoney(secured)})가 15억원을 초과합니다.`,
-      alternative: '일반회생 절차를 검토해보세요.',
-    };
-  }
-  return { pass: true, message: '', alternative: '' };
-}
-
-/**
- * 현재가치 검증
- */
-export function checkPresentValue(monthlyPayment, months, liquidationValue) {
-  const leibniz = getLeibnizCoefficient(months);
-  const presentValue = Math.floor(leibniz * monthlyPayment);
-  const minRequired = liquidationValue + monthlyPayment * 3;
-  return {
-    presentValue,
-    minRequired,
-    pass: presentValue >= minRequired,
-  };
-}
-
-/**
- * 회생 가능성 점수 산정 (100점 만점)
+ * 부동산 청산가치 — 시세 × 0.7 − 담보대출, 명의·지분 반영
  *
- * 점수가 높을수록 회생이 "적합하고 유리"하다는 의미.
- * 회생이 불필요한 경우(재산으로 충분히 상환 가능, 소득으로 단기 상환 가능)에는
- * 점수가 낮아야 한다.
+ * @param {'single'|'joint'|'spouse'} ownership
+ * @param {boolean} isRehabCourt — 회생법원 여부 (배우자 단독 명의일 때만 영향)
  */
-export function calcScore(answers, computed) {
-  let incomeScore = 0;  // 30점
-  let debtScore = 0;    // 25점
-  let assetScore = 0;   // 20점
-  let riskScore = 0;    // 25점
-
-  const totalDebt = answers.totalDebt || 0;
-
-  // === 소득 점수 (30점) ===
-  // 소득이 있어야 변제 능력 인정, 하지만 소득이 너무 높으면 회생 불필요
-  if (computed.disposableIncome > 0) {
-    // 가용소득으로 2년(24개월) 이내 전액 상환 가능 → 회생 불필요
-    if (totalDebt > 0 && computed.disposableIncome * 24 >= totalDebt) {
-      incomeScore += 5; // 소득 있지만 회생 필요성 낮음
-    } else {
-      incomeScore += 15;
-      if (answers.incomeType === '급여') incomeScore += 10;
-      else if (answers.incomeType === '영업사업') incomeScore += 7;
-      else if (answers.incomeType === '연금') incomeScore += 8;
-      if (totalDebt > 0) {
-        if (computed.disposableIncome >= totalDebt * 0.005) incomeScore += 5;
-        else if (computed.disposableIncome >= totalDebt * 0.002) incomeScore += 3;
-      }
-    }
-  } else if (answers.incomeType !== '무직') {
-    incomeScore += 3;
+export function calcRealEstateAsset({
+  realEstateValue = 0,
+  realEstateMortgage = 0,
+  ownership = 'single',
+  share = 0.5, // joint 시 지분 (기본 1/2)
+  isRehabCourt = true,
+}) {
+  const net = Math.max(0, (Number(realEstateValue) || 0) * REAL_ESTATE_MULTIPLIER - (Number(realEstateMortgage) || 0));
+  switch (ownership) {
+    case 'single':
+      return net;
+    case 'joint':
+      return Math.round(net * (share || 0.5));
+    case 'spouse':
+      return isRehabCourt ? 0 : Math.round(net * 0.5);
+    default:
+      return net;
   }
+}
 
-  // === 채무 점수 (25점) ===
-  const debtCheck = checkDebtLimit(totalDebt, answers.securedDebt || 0);
-  if (debtCheck.pass) {
-    debtScore += 15;
-    const unsecuredRatio = 1 - ((answers.securedDebt || 0) / Math.max(totalDebt, 1));
-    debtScore += Math.round(unsecuredRatio * 10);
-  }
-
-  // === 재산 점수 (20점) ===
-  // 핵심: 청산가치(재산)가 채무보다 크면 회생 실익이 없으므로 점수 하락
-  if (totalDebt > 0 && computed.liquidationValue >= totalDebt) {
-    // 재산만으로 채무 전액 상환 가능 → 회생 실익 없음
-    const assetDebtRatio = computed.liquidationValue / totalDebt;
-    if (assetDebtRatio >= 3) assetScore += 0;       // 재산이 채무의 3배 이상
-    else if (assetDebtRatio >= 1.5) assetScore += 3; // 1.5배 이상
-    else assetScore += 5;                            // 1~1.5배
-  } else if (computed.liquidationValue <= EXEMPT_ASSETS.deposit + EXEMPT_ASSETS.insurance) {
-    // 면제재산 범위 내 → 가장 유리
-    assetScore += 20;
-  } else if (totalDebt > 0 && computed.liquidationValue < totalDebt * 0.3) {
-    assetScore += 17;
-  } else if (totalDebt > 0 && computed.liquidationValue < totalDebt * 0.7) {
-    assetScore += 12;
-  } else {
-    assetScore += 7;
-  }
-
-  // === 위험도 점수 (25점) ===
-  if (answers.pastHistory === '없음') riskScore += 10;
-  else if (answers.pastHistory === '회생면책(5년이상)' || answers.pastHistory === '파산면책') riskScore += 6;
-  else if (answers.pastHistory === '회생면책(5년이내)') riskScore += 2;
-
-  const causes = answers.debtCauses || [];
-  const riskyCount = causes.filter(c => ['도박', '투자(주식·코인)'].includes(c)).length;
-  if (riskyCount === 0) riskScore += 8;
-  else if (riskyCount === 1 && causes.length > 1) riskScore += 4;
-
-  if (!answers.recentDebtRatio || answers.recentDebtRatio === '없음') riskScore += 7;
-  else if (answers.recentDebtRatio === '10% 미만') riskScore += 5;
-  else if (answers.recentDebtRatio === '10~30%') riskScore += 2;
-
-  const total = incomeScore + debtScore + assetScore + riskScore;
-
-  // 탕감율이 0%이면 회생 실익 없음 → 등급 강제 하향
-  const reliefRate = computed.reliefRate || 0;
-  let grade, gradeColor;
-
-  if (reliefRate <= 0) {
-    grade = '회생 실익 없음';
-    gradeColor = 'danger';
-  } else if (total >= 80) {
-    grade = '회생 가능성 높음';
-    gradeColor = 'success';
-  } else if (total >= 60) {
-    grade = '회생 가능 (조건부)';
-    gradeColor = 'warning';
-  } else if (total >= 40) {
-    grade = '추가 검토 필요';
-    gradeColor = 'caution';
-  } else {
-    grade = '회생 어려움';
-    gradeColor = 'danger';
-  }
-
-  return {
-    total,
-    grade,
-    gradeColor,
-    breakdown: {
-      income: { score: incomeScore, max: 30 },
-      debt: { score: debtScore, max: 25 },
-      asset: { score: assetScore, max: 20 },
-      risk: { score: riskScore, max: 25 },
-    },
-  };
+/** 차량 청산가치 — 시세 − 담보대출, 음수면 0 (감산 불가) */
+export function calcVehicleAsset({ vehicleValue = 0, vehicleLoan = 0 }) {
+  return Math.max(0, (Number(vehicleValue) || 0) - (Number(vehicleLoan) || 0));
 }
 
 /**
- * 전체 진단 결과 계산
+ * 예금·보험 합산 재산 (압류금지 250만 공제) — 섹션 3-6
+ *   ① 보험 순자산 = max(0, 환급금 − 약관대출)
+ *   ② 합계 = 예금 + 보험순자산
+ *   ③ 재산인정액 = max(0, 합계 − 250만)
  */
-export function calculateDiagnosis(answers) {
-  const familyCount = calcFamilyCount(answers.dependents || 0);
-  const medianIncome = getMedianIncome(familyCount);
+export function calcDepositInsuranceAsset({
+  depositValue = 0,
+  insuranceValue = 0,
+  insurancePolicyLoan = 0,
+  insuranceKnown = 'yes',
+}) {
+  const deposit = Number(depositValue) || 0;
+  const insuranceGross = insuranceKnown === 'no' ? 0 : (Number(insuranceValue) || 0);
+  const insuranceNet = Math.max(0, insuranceGross - (Number(insurancePolicyLoan) || 0));
+  const sum = deposit + insuranceNet;
+  return Math.max(0, sum - DEPOSIT_INSURANCE_EXEMPT);
+}
+
+/** 청약 순자산 — 환급금 − 청약담보대출 (250만 공제 대상 아님) */
+export function calcAccountAsset({ accountValue = 0, accountCollateralLoan = 0 }) {
+  return Math.max(0, (Number(accountValue) || 0) - (Number(accountCollateralLoan) || 0));
+}
+
+/** 퇴직금 재산가치 (회사지급 퇴직금만 × 0.5, 연금·IRP는 0) */
+export function calcRetirementAsset({ retirementType, retirementAmount = 0 }) {
+  if (retirementType === 'severance') {
+    return Math.round((Number(retirementAmount) || 0) * 0.5);
+  }
+  return 0;
+}
+
+/**
+ * 전세 재산 인정액 — 질권설정 유무에 따라 분기, 면제재산 지역별 공제
+ *
+ * @param {'yes'|'no'|'unknown'} jeonseLien
+ *   yes: 질권설정형 (HUG) → 전세금 − 질권금액, 대출은 채무에서 제외
+ *   no : 신용대출형 (카카오·HF) → 전세금 전액, 대출은 채무에 포함
+ *   unknown: 알 수 없음 → 별도 처리 (calculateDiagnosis에서 이중 결과 생성)
+ */
+export function calcJeonseAsset({
+  jeonseAmount = 0,
+  jeonseLien,
+  jeonseLienAmount = 0,
+  residenceSido,
+  residenceSigungu,
+}) {
+  const amount = Number(jeonseAmount) || 0;
+  if (amount <= 0) return 0;
+
+  let base;
+  if (jeonseLien === 'yes') {
+    base = Math.max(0, amount - (Number(jeonseLienAmount) || 0));
+  } else {
+    // no / unknown 모두 '전세금 전액' 가정 (unknown은 호출부에서 이중 계산)
+    base = amount;
+  }
+
+  const exemption = resolveJeonseExemption(residenceSido, residenceSigungu);
+  return Math.max(0, base - exemption);
+}
+
+/**
+ * 청산가치 합계 — 각 자산 항목별 산정 후 합산
+ */
+export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride } = {}) {
+  const assets = answers.otherAssets || [];
+  const hasRealEstate = answers.housingType === '자가';
+  const hasJeonse = answers.housingType === '전세';
+
+  // 자가 부동산
+  const realEstate = hasRealEstate
+    ? calcRealEstateAsset({
+        realEstateValue: answers.realEstateValue,
+        realEstateMortgage: answers.realEstateMortgage,
+        ownership: answers.realEstateOwnership,
+        share: answers.realEstateShare,
+        isRehabCourt,
+      })
+    : 0;
+
+  // 차량
+  const vehicle = assets.includes('vehicle')
+    ? calcVehicleAsset({ vehicleValue: answers.vehicleValue, vehicleLoan: answers.vehicleLoan })
+    : 0;
+
+  // 예금·보험 (250만 합계 공제)
+  const depositInsurance = calcDepositInsuranceAsset({
+    depositValue: assets.includes('deposit') ? answers.depositValue : 0,
+    insuranceValue: assets.includes('insurance') ? answers.insuranceValue : 0,
+    insurancePolicyLoan: assets.includes('insurance') ? answers.insurancePolicyLoan : 0,
+    insuranceKnown: answers.insuranceKnown || 'yes',
+  });
+
+  // 청약
+  const account = assets.includes('account')
+    ? calcAccountAsset({
+        accountValue: answers.accountValue,
+        accountCollateralLoan: answers.accountCollateralLoan,
+      })
+    : 0;
+
+  const stocks = assets.includes('stocks') ? (Number(answers.stocksValue) || 0) : 0;
+  const crypto = assets.includes('crypto') ? (Number(answers.cryptoValue) || 0) : 0;
+
+  const retirement = assets.includes('retirement')
+    ? calcRetirementAsset({
+        retirementType: answers.retirementType,
+        retirementAmount: answers.retirementAmount,
+      })
+    : 0;
+
+  // 전세 (질권설정 override 반영)
+  const jeonse = hasJeonse
+    ? calcJeonseAsset({
+        jeonseAmount: answers.jeonseAmount,
+        jeonseLien: jeonseLienOverride || answers.jeonseLien,
+        jeonseLienAmount: answers.jeonseLienAmount,
+        residenceSido: answers.residenceSido,
+        residenceSigungu: answers.residenceSigungu,
+      })
+    : 0;
+
+  const total = realEstate + vehicle + depositInsurance + account + stocks + crypto + retirement + jeonse;
+
+  return {
+    realEstate,
+    vehicle,
+    depositInsurance,
+    account,
+    stocks,
+    crypto,
+    retirement,
+    jeonse,
+    total,
+  };
+}
+
+
+// ================================================================
+// 7. 신용채무 — 전세 신용대출형은 여기에 포함됨 (섹션 3-4-1)
+// ================================================================
+
+/**
+ * 판정·변제에 쓰이는 "신용채무" 금액 산출
+ *  - 사용자가 입력한 총 신용채무(totalCreditDebt)
+ *  - 전세 신용대출형(무/모름)이면 전세대출금이 포함되어야 함
+ *    — UI에서 사용자가 이미 포함해 입력한 경우 중복 가산 방지 위해
+ *      `jeonseLoanIncludedInDebt` 플래그를 true로 둠 (기본 true)
+ */
+export function calcCreditDebt(answers, { jeonseLienOverride } = {}) {
+  const base = Number(answers.totalCreditDebt) || 0;
+  // 현재 구조에서는 사용자가 입력한 총 신용채무에 전세 신용대출금을 포함해 입력하도록 안내 (중복 방지)
+  // → base 그대로 반환
+  // (향후 별도 입력 분리 시 override로 분기)
+  void jeonseLienOverride;
+  return base;
+}
+
+
+// ================================================================
+// 8. 담보대출 존재 여부 (섹션 4-1 공통 경고 조건)
+// ================================================================
+
+/**
+ * 주택·차량·보험 약관·청약 담보·전세 질권설정 중 어느 하나라도
+ * 담보대출이 존재하면 true
+ */
+export function hasAnyCollateralLoan(answers) {
+  if (answers.housingType === '자가' && (Number(answers.realEstateMortgage) || 0) > 0) return true;
+  const assets = answers.otherAssets || [];
+  if (assets.includes('vehicle') && (Number(answers.vehicleLoan) || 0) > 0) return true;
+  if (assets.includes('insurance') && (Number(answers.insurancePolicyLoan) || 0) > 0) return true;
+  if (assets.includes('account') && (Number(answers.accountCollateralLoan) || 0) > 0) return true;
+  if (answers.housingType === '전세' && answers.jeonseLien === 'yes' && (Number(answers.jeonseLienAmount) || 0) > 0) return true;
+  return false;
+}
+
+/** 담보대출 상세 유형 목록 — 경고 문구에서 구체 표시 용도 */
+export function listCollateralLoans(answers) {
+  const items = [];
+  if (answers.housingType === '자가' && (Number(answers.realEstateMortgage) || 0) > 0) items.push('주택 담보대출');
+  const assets = answers.otherAssets || [];
+  if (assets.includes('vehicle') && (Number(answers.vehicleLoan) || 0) > 0) items.push('차량 담보대출');
+  if (assets.includes('insurance') && (Number(answers.insurancePolicyLoan) || 0) > 0) items.push('보험 약관대출');
+  if (assets.includes('account') && (Number(answers.accountCollateralLoan) || 0) > 0) items.push('청약 담보대출');
+  if (answers.housingType === '전세' && answers.jeonseLien === 'yes' && (Number(answers.jeonseLienAmount) || 0) > 0) items.push('전세 질권설정');
+  return items;
+}
+
+
+// ================================================================
+// 9. 24개월 특례 판정 (섹션 4-2)
+// ================================================================
+
+/**
+ * 24개월 단축 특례 적용 여부
+ * - 자격(나이·장애·전세사기 피해자 등) 중 하나 이상 충족
+ * - 채무 사용처에 도박·주식·코인이 없어야 함
+ */
+export function applies24MonthSpecial(answers) {
+  const quals = answers.specialQualifications || [];
+  const hasQualification = quals.some(q => SPECIAL_QUALS.has(q));
+  if (!hasQualification) return false;
+
+  const usages = answers.debtCauses || [];
+  const hasDisqualifying = usages.some(u => DISQUALIFYING_USAGES.has(u));
+  if (hasDisqualifying) return false;
+
+  return true;
+}
+
+
+// ================================================================
+// 10. 변제 계획 산출 (섹션 4)
+// ================================================================
+
+/**
+ * 변제 계획 산정
+ *  1) 기본기간(24/36)으로 시도
+ *  2) 부족하면 60개월까지 연장
+ *  3) 60개월도 부족하면 월변제액 강제 상향 (청산가치×1.1/60)
+ *
+ * @returns {{
+ *   basePeriod, period, monthlyPayment, minPayment, totalPayment, exemption,
+ *   forcedUpward, feasible
+ * }}
+ */
+export function calcPaymentPlan({ disposableIncome, liquidationValue, creditDebt, basePeriod }) {
+  const minPayment = Math.round(liquidationValue * MIN_PAYMENT_MULTIPLIER); // 최소변제액
+  const disp = Math.max(0, disposableIncome);
+
+  let period;
+  let monthlyPayment;
+  let forcedUpward = false;
+  let feasible = true;
+
+  // 1) 기본 기간으로 충족 여부
+  if (disp * basePeriod >= minPayment) {
+    period = basePeriod;
+    monthlyPayment = disp;
+  } else {
+    // 2) 60개월까지 연장하여 충족 여부 재시도
+    const needed = disp > 0 ? Math.ceil(minPayment / disp) : MAX_PERIOD + 1;
+    if (needed <= MAX_PERIOD && disp > 0) {
+      period = Math.max(basePeriod, Math.min(MAX_PERIOD, needed));
+      monthlyPayment = disp;
+    } else {
+      // 3) 60개월로도 부족 → 월변제액 강제 상향
+      period = MAX_PERIOD;
+      monthlyPayment = Math.ceil(minPayment / MAX_PERIOD);
+      forcedUpward = true;
+      feasible = monthlyPayment <= disp; // 가용소득으로 감당 가능 여부
+    }
+  }
+
+  const totalPayment = monthlyPayment * period;
+  const exemption = Math.max(0, creditDebt - totalPayment);
+
+  return {
+    basePeriod,
+    period,
+    monthlyPayment,
+    minPayment,
+    totalPayment,
+    exemption,
+    forcedUpward,
+    feasible,
+  };
+}
+
+
+// ================================================================
+// 11. 판정 (섹션 4-1, 3-state)
+// ================================================================
+
+export const VERDICT = {
+  POSSIBLE: 'possible',     // 회생 가능
+  IMPOSSIBLE: 'impossible', // 회생 불가 (청산가치 ≥ 신용채무)
+  CONSULT: 'consult',       // 전문가 상담
+};
+
+/**
+ * 3-state 판정 트리
+ *   if 신용채무 ≤ 청산가치 → 불가
+ *   elif 가용소득 ≤ 0 → 상담
+ *   elif 가용소득×60 < 최소변제액 → 상담 (청산가치 미충족)
+ *   else → 가능
+ *
+ * ※ 사용자 메시지는 일반 고객 눈높이 — 계산식·법률 용어 배제, 쉬운 문장으로.
+ */
+export function determineVerdict({ creditDebt, liquidationValue, disposableIncome, minPayment }) {
+  if (creditDebt <= liquidationValue) {
+    return {
+      verdict: VERDICT.IMPOSSIBLE,
+      title: '회생으로 얻을 수 있는 이득이 없어요',
+      detail: '보유하신 재산을 처분하시면 현재 채무를 모두 갚을 수 있습니다. 회생 절차를 진행해도 따로 탕감받을 금액이 없으므로, 재산 처분을 통한 일반 상환이나 다른 방법을 전문가와 의논해보세요.',
+    };
+  }
+  if (disposableIncome <= 0) {
+    return {
+      verdict: VERDICT.CONSULT,
+      title: '전문가 상담이 필요합니다',
+      detail: '매월 버는 돈에서 생활비를 빼고 나면 남는 돈이 없는 상황이에요. 생활비를 줄이거나 소득을 늘리는 등 여러 방법을 전문가와 함께 찾아보세요.',
+    };
+  }
+  if (disposableIncome * MAX_PERIOD < minPayment) {
+    return {
+      verdict: VERDICT.CONSULT,
+      title: '전문가 상담이 필요합니다',
+      detail: '매월 여유 자금을 5년(60개월) 동안 모두 모아도 법원에서 요구하는 최소 변제 금액에 못 미칩니다. 월 변제액을 늘리거나 생활비를 더 줄이는 등의 조정이 필요하니 전문가 상담을 받아보세요.',
+    };
+  }
+  return {
+    verdict: VERDICT.POSSIBLE,
+    title: '회생이 가능한 것으로 보입니다',
+    detail: '회생 신청 기본 조건을 모두 충족하셨어요. 아래 예상 변제 계획을 참고하시고, 실제 진행 전에는 꼭 전문가와 구체적인 절차를 의논하세요.',
+  };
+}
+
+
+// ================================================================
+// 12. 종합 진단 엔트리 포인트
+// ================================================================
+
+/**
+ * 단일 시나리오에 대한 진단 계산
+ * (질권 모름 시 calculateDiagnosis에서 두 번 호출)
+ */
+function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
+  // 부양가족
+  const familyCount = calcFamilyCount({
+    maritalStatus: answers.maritalStatus,
+    spouseIncome: answers.spouseIncome,
+    minorChildren: answers.minorChildren,
+    dependentParents: answers.dependentParents,
+  });
   const livingExpense = calcLivingExpense(familyCount);
 
+  // 월세 공제
+  const housingDeduction = calcHousingDeduction({
+    housingType: answers.housingType,
+    monthlyRent: answers.monthlyRent,
+    residenceSido: answers.residenceSido,
+    residenceSigungu: answers.residenceSigungu,
+    familyCount,
+  });
+
+  // 가용소득 (마이너스 허용)
   const disposableIncome = calcDisposableIncome({
     incomeType: answers.incomeType,
-    monthlyIncome: answers.monthlyIncome || 0,
-    monthlyRevenue: answers.monthlyRevenue || 0,
-    monthlyExpense: answers.monthlyExpense || 0,
+    monthlyIncome: answers.monthlyIncome,
+    monthlyRevenue: answers.monthlyRevenue,
+    monthlyExpense: answers.monthlyExpense,
     familyCount,
+    housingDeduction,
   });
 
-  const liquidationValue = calcLiquidationValue(answers.assets || {});
+  // 관할 법원
+  const court = resolveCourt(answers.residenceSido, answers.residenceSigungu);
+  const isRehabCourt = court.recommended === 'rehab' && !!court.rehab;
 
-  // 변제기간별 계산 (36~60개월)
-  const periods = {};
-  for (let m = 36; m <= 60; m += 12) {
-    const monthlyPayment = calcMonthlyPayment(disposableIncome, liquidationValue, m);
-    const totalPayment = monthlyPayment * m;
-    const reliefAmount = Math.max(answers.totalDebt - totalPayment, 0);
-    const reliefRate = answers.totalDebt > 0 ? ((reliefAmount / answers.totalDebt) * 100) : 0;
-    const pvCheck = checkPresentValue(monthlyPayment, m, liquidationValue);
+  // 청산가치
+  const liquidation = calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride });
+  const creditDebt = calcCreditDebt(answers, { jeonseLienOverride });
 
-    periods[m] = {
-      months: m,
-      monthlyPayment,
-      totalPayment,
-      reliefAmount,
-      reliefRate: Math.round(reliefRate * 10) / 10,
-      presentValue: pvCheck.presentValue,
-      presentValuePass: pvCheck.pass,
-    };
-  }
+  // 24개월 특례
+  const is24Special = applies24MonthSpecial(answers);
+  const basePeriod = is24Special ? SPECIAL_PERIOD : DEFAULT_PERIOD;
 
-  // 기본 변제기간 (36개월)
-  const defaultPeriod = periods[36];
-
-  // 모든 기간에 대한 총 변제금 (점수 계산용)
-  const totalPayment36 = periods[36]?.totalPayment || 0;
-  const totalPayment60 = periods[60]?.totalPayment || 0;
-
-  // 채무한도 체크
-  const debtLimit = checkDebtLimit(answers.totalDebt, answers.securedDebt || 0);
-
-  // 점수 산정
-  const score = calcScore(answers, {
+  // 판정
+  const minPayment = Math.round(liquidation.total * MIN_PAYMENT_MULTIPLIER);
+  const verdictInfo = determineVerdict({
+    creditDebt,
+    liquidationValue: liquidation.total,
     disposableIncome,
-    liquidationValue,
-    totalPayment36,
-    totalPayment60,
-    reliefRate: defaultPeriod.reliefRate,
+    minPayment,
   });
 
-  // 위험 요소 수집
-  const risks = [];
-  const positives = [];
-
-  // 회생 실익 없음 경고 (재산이 채무보다 큰 경우)
-  if (liquidationValue >= answers.totalDebt && answers.totalDebt > 0) {
-    risks.push({
-      type: 'error',
-      message: `보유 재산(${formatKoreanMoney(liquidationValue)})이 총 채무(${formatKoreanMoney(answers.totalDebt)})보다 많아 회생 실익이 없습니다`,
-      detail: '재산을 처분하면 채무를 충분히 상환할 수 있으므로, 법원에서 회생 신청이 기각될 가능성이 높습니다.',
+  // 변제 계획 (불가 판정이면 생략)
+  let paymentPlan = null;
+  if (verdictInfo.verdict !== VERDICT.IMPOSSIBLE) {
+    paymentPlan = calcPaymentPlan({
+      disposableIncome,
+      liquidationValue: liquidation.total,
+      creditDebt,
+      basePeriod,
     });
   }
 
-  // 소득만으로 단기 상환 가능한 경우
-  if (disposableIncome > 0 && answers.totalDebt > 0 && disposableIncome * 24 >= answers.totalDebt) {
-    risks.push({
-      type: 'warning',
-      message: `월 가용소득(${formatKoreanMoney(disposableIncome)})으로 2년 이내 전액 상환이 가능합니다`,
-      detail: '채무 상환 능력이 충분하여 회생 없이도 해결 가능한 상황입니다. 일반 상환 또는 채무 조정을 먼저 검토해보세요.',
+  // 경고 수집 (일반 고객 눈높이 메시지)
+  const warnings = [];
+
+  if (hasAnyCollateralLoan(answers)) {
+    warnings.push({
+      severity: 'error',
+      title: '담보대출이 있어요 — 꼭 전문가와 상담하세요',
+      detail: `확인된 담보대출: ${listCollateralLoans(answers).join(', ')}. 회생 진행 중 담보로 잡힌 집·차 등이 경매로 처분될 수 있어요. 회생 시작 전에 반드시 전문가와 먼저 이야기해보세요.`,
     });
   }
 
-  if (!debtLimit.pass) {
-    risks.push({ type: 'error', message: debtLimit.message, detail: debtLimit.alternative });
+  if (verdictInfo.verdict === VERDICT.CONSULT && disposableIncome <= 0) {
+    warnings.push({
+      severity: 'warning',
+      title: '매월 남는 돈이 부족해요',
+      detail: `월 소득에서 가족 생활비(약 ${formatKoreanMoney(livingExpense)})를 빼면 매월 남는 돈이 없어요. 부양가족 확인을 다시 하시거나 소득을 늘리는 방법을 검토해보세요.`,
+    });
   }
+
+  if (paymentPlan?.forcedUpward) {
+    const requiredMonthly = formatKoreanMoney(paymentPlan.monthlyPayment);
+    const currentAvailable = formatKoreanMoney(disposableIncome);
+    warnings.push({
+      severity: 'warning',
+      title: '월 변제액이 매월 여유 자금을 넘어설 수 있어요',
+      detail: `법원 최소 기준을 맞추려면 매월 ${requiredMonthly}씩 갚아야 합니다. 현재 매월 남는 돈(${currentAvailable})으로는 ${paymentPlan.feasible ? '가능하지만 빠듯하니 전문가 확인을 권장해요' : '부족하므로 생활비 조정이나 소득 증대 같은 조정이 필요해요'}.`,
+    });
+  }
+
   if (answers.incomeType === '무직') {
-    risks.push({ type: 'error', message: '현재 소득이 없어 변제 능력 입증이 어렵습니다', detail: '취업 후 재검토를 권장합니다' });
+    warnings.push({
+      severity: 'error',
+      title: '현재 소득이 없습니다',
+      detail: '개인회생은 매월 꾸준한 소득이 있어야 신청할 수 있어요. 취업 후 다시 진단받아보시길 권장합니다.',
+    });
   }
+
   if (answers.pastHistory === '회생면책(5년이내)') {
-    risks.push({ type: 'warning', message: '최근 5년 내 면책 이력이 있어 면책불허가 위험이 있습니다', detail: '전문가 상담이 필요합니다' });
+    warnings.push({
+      severity: 'warning',
+      title: '최근 5년 안에 회생으로 면책받은 이력이 있어요',
+      detail: '5년 안에 다시 면책받는 것은 법적으로 어려울 수 있어요. 다른 방법이 있는지 전문가와 상담해보세요.',
+    });
   }
+
   if (answers.pastHistory === '현재진행중') {
-    risks.push({ type: 'error', message: '현재 회생/파산 절차가 진행 중입니다', detail: '기존 절차 완료 후 신청 가능합니다' });
-  }
-  const causes = answers.debtCauses || [];
-  if (causes.includes('도박')) {
-    risks.push({ type: 'warning', message: '도박이 채무 원인에 포함되어 면책불허가 위험요소입니다', detail: '면책 불가는 아니지만 소명이 필요합니다' });
-  }
-  if (causes.includes('투자(주식·코인)')) {
-    risks.push({ type: 'warning', message: '투자 손실이 채무 원인에 포함되어 있습니다', detail: '과도한 투자는 면책 심사에 불리할 수 있습니다' });
-  }
-  if (answers.delinquencyStatus === '압류진행중') {
-    risks.push({ type: 'warning', message: '현재 압류가 진행 중입니다', detail: '개인회생 신청 시 중지명령을 통해 압류 해제가 가능합니다' });
-  }
-  if (answers.recentDebtRatio === '30% 이상') {
-    risks.push({ type: 'warning', message: '최근 6개월 신규 채무 비율이 30% 이상으로 높습니다', detail: '의도적 채무 증가로 판단될 수 있어 소명이 필요합니다' });
-  }
-
-  // 가용소득 부족 경고
-  if (disposableIncome === 0 && answers.incomeType !== '무직') {
-    const monthlyPayment = defaultPeriod.monthlyPayment;
-    if (monthlyPayment > 0) {
-      risks.push({
-        type: 'error',
-        message: `월 소득(${formatKoreanMoney(
-          answers.incomeType === '영업사업'
-            ? Math.max(answers.monthlyRevenue - answers.monthlyExpense, 0)
-            : answers.monthlyIncome || 0
-        )})이 생계비(${formatKoreanMoney(livingExpense)})보다 적어 가용소득이 0원입니다`,
-        detail: `현재 월 변제금 ${formatKoreanMoney(monthlyPayment)}은 재산(청산가치) 기반 최소변제금이며, 실제 이 금액을 매월 납부할 소득이 부족합니다. 소득이 늘거나 생계비가 줄어야 법원 인가 가능성이 높아집니다.`,
-      });
-    }
-  }
-
-  // 청산가치가 변제금을 결정하는 경우 안내
-  if (disposableIncome < defaultPeriod.monthlyPayment && liquidationValue > 0 && disposableIncome >= 0) {
-    const minFromLiquidation = Math.ceil(liquidationValue / 36 / 1000) * 1000;
-    if (defaultPeriod.monthlyPayment >= minFromLiquidation && minFromLiquidation > disposableIncome) {
-      risks.push({
-        type: 'warning',
-        message: `보유 재산(청산가치 ${formatKoreanMoney(liquidationValue)})이 월 변제금을 높이고 있습니다`,
-        detail: '개인회생에서는 총 변제금이 청산가치 이상이어야 합니다. 재산이 많을수록 변제금이 높아지고 탕감액은 줄어듭니다.',
-      });
-    }
-  }
-
-  // 긍정 요소
-  if (debtLimit.pass) {
-    positives.push(`총 채무 ${formatKoreanMoney(answers.totalDebt)}으로 법적 기준 이내입니다`);
-  }
-  if (disposableIncome > 0 && answers.incomeType !== '무직') {
-    positives.push(`월 가용소득 ${formatKoreanMoney(disposableIncome)}으로 변제 능력이 인정됩니다`);
-  }
-  if (familyCount >= 3) {
-    positives.push(`부양가족 ${familyCount}명으로 생계비 공제가 많아 변제금 부담이 줄어듭니다`);
-  }
-  if (defaultPeriod.reliefRate >= 80) {
-    positives.push(`예상 탕감률 ${defaultPeriod.reliefRate}%로 높은 수준의 채무 감면이 가능합니다`);
-  }
-  if (answers.pastHistory === '없음') {
-    positives.push('과거 회생/파산 이력이 없어 면책에 유리합니다');
+    warnings.push({
+      severity: 'error',
+      title: '지금 회생·파산 절차가 진행 중이에요',
+      detail: '현재 진행 중인 절차가 있어 새로 신청할 수 없어요. 기존 절차가 마무리된 후 다시 진단받아보세요.',
+    });
   }
 
   return {
-    // 입력 요약
+    scenarioLabel: jeonseLienOverride
+      ? (jeonseLienOverride === 'yes' ? '전세 질권설정 O' : '전세 질권설정 X')
+      : null,
     familyCount,
-    medianIncome,
+    court,
     livingExpense,
+    housingDeduction,
     disposableIncome,
-    liquidationValue,
+    liquidation,
+    creditDebt,
+    minPayment,
+    is24Special,
+    verdict: verdictInfo.verdict,
+    verdictTitle: verdictInfo.title,
+    verdictDetail: verdictInfo.detail,
+    paymentPlan,
+    warnings,
+  };
+}
 
-    // 변제 계획
-    periods,
-    defaultPeriod,
+/**
+ * 진단 메인 엔트리
+ * - 질권설정 'unknown' 입력 시 유/무 두 시나리오 결과를 모두 생성해 반환
+ */
+export function calculateDiagnosis(answers) {
+  // 질권 '모름'이면 두 케이스 병행 계산
+  if (answers.housingType === '전세' && answers.jeonseLien === 'unknown') {
+    const withLien = calculateSingleScenario(answers, { jeonseLienOverride: 'yes' });
+    const withoutLien = calculateSingleScenario(answers, { jeonseLienOverride: 'no' });
+    return {
+      ...withoutLien, // 보수적 기본(질권 X — 재산이 더 큼)
+      hasAlternate: true,
+      alternate: withLien,
+      primaryLabel: '질권설정 없음(신용대출형) 가정',
+      alternateLabel: '질권설정 있음(HUG 등) 가정',
+    };
+  }
 
-    // 채무 한도
-    debtLimit,
-
-    // 점수
-    score,
-
-    // 위험/긍정 요소
-    risks,
-    positives,
+  const result = calculateSingleScenario(answers);
+  return {
+    ...result,
+    hasAlternate: false,
+    alternate: null,
   };
 }
 
 
-// ========================================================
-// 유틸리티
-// ========================================================
+// ================================================================
+// 13. 유틸리티
+// ================================================================
 
-/** 숫자를 한글 금액으로 변환 (예: 150000000 → "1억 5,000만원") */
+/** 숫자 → "1억 2,345만원" 형태 문자열 */
 export function formatKoreanMoney(num) {
-  if (num === 0 || num === undefined || num === null) return '0원';
-
-  const absNum = Math.abs(num);
+  if (!num || num === 0) return '0원';
+  const abs = Math.abs(num);
   const sign = num < 0 ? '-' : '';
 
-  if (absNum >= 100_000_000) {
-    const eok = Math.floor(absNum / 100_000_000);
-    const remainder = absNum % 100_000_000;
-    const man = Math.floor(remainder / 10_000);
+  if (abs >= 100_000_000) {
+    const eok = Math.floor(abs / 100_000_000);
+    const rem = abs % 100_000_000;
+    const man = Math.floor(rem / 10_000);
     if (man > 0) return `${sign}${eok}억 ${man.toLocaleString()}만원`;
     return `${sign}${eok}억원`;
   }
-  if (absNum >= 10_000) {
-    const man = Math.floor(absNum / 10_000);
-    const remainder = absNum % 10_000;
-    if (remainder > 0) return `${sign}${man.toLocaleString()}만 ${remainder.toLocaleString()}원`;
+  if (abs >= 10_000) {
+    const man = Math.floor(abs / 10_000);
+    const rem = abs % 10_000;
+    if (rem > 0) return `${sign}${man.toLocaleString()}만 ${rem.toLocaleString()}원`;
     return `${sign}${man.toLocaleString()}만원`;
   }
-  return `${sign}${absNum.toLocaleString()}원`;
+  return `${sign}${abs.toLocaleString()}원`;
 }
 
-/** 만원 단위 입력을 원 단위로 변환 */
+/** 만원 단위 입력 → 원 단위 */
 export function manwonToWon(manwon) {
-  return (manwon || 0) * 10_000;
+  return (Number(manwon) || 0) * 10_000;
 }
 
-/** 원 단위를 만원 단위로 변환 */
+/** 원 단위 → 만원 단위 (반올림) */
 export function wonToManwon(won) {
-  return Math.round((won || 0) / 10_000);
+  return Math.round((Number(won) || 0) / 10_000);
 }

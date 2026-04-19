@@ -1,5 +1,12 @@
+/**
+ * 자가진단 전역 상태 훅 (2026.04.17 회의 반영판)
+ *
+ * answers 스키마는 data/questions.js와 lib/calculator.js를 참조.
+ * 금액 필드는 UI에서 만원 단위로 입력받지만, calculator로 전달할 때
+ * prepareAnswersForCalculator()로 원 단위로 일괄 변환한다.
+ */
 import { createContext, useContext, useReducer, useCallback, useMemo } from 'react';
-import { getVisibleQuestions } from '../data/questions';
+import { getVisibleQuestions, findQuestionIndexById } from '../data/questions';
 import { calculateDiagnosis, manwonToWon } from '../lib/calculator';
 
 const DiagnosisContext = createContext(null);
@@ -25,12 +32,9 @@ function diagnosisReducer(state, action) {
     case 'PREV_STEP':
       return { ...state, currentStep: Math.max(0, state.currentStep - 1) };
     case 'SET_STEP':
-      return { ...state, currentStep: action.step };
+      return { ...state, currentStep: Math.max(0, action.step) };
     case 'ADD_CHAT_MESSAGE':
-      return {
-        ...state,
-        chatHistory: [...state.chatHistory, action.message]
-      };
+      return { ...state, chatHistory: [...state.chatHistory, action.message] };
     case 'RESET':
       return { ...initialState };
     case 'LOAD_DIAGNOSIS':
@@ -51,6 +55,40 @@ function diagnosisReducer(state, action) {
   }
 }
 
+/**
+ * 만원 단위로 입력된 금액 필드를 원 단위로 변환해 calculator에 넘길 수 있는 형태로 준비
+ */
+export function prepareAnswersForCalculator(answers) {
+  const moneyFields = [
+    'totalCreditDebt',
+    'monthlyIncome',
+    'monthlyRevenue',
+    'monthlyExpense',
+    'monthlyRent',
+    'realEstateValue',
+    'realEstateMortgage',
+    'jeonseAmount',
+    'jeonseLienAmount',
+    'vehicleValue',
+    'vehicleLoan',
+    'depositValue',
+    'insuranceValue',
+    'insurancePolicyLoan',
+    'accountValue',
+    'accountCollateralLoan',
+    'stocksValue',
+    'cryptoValue',
+    'retirementAmount',
+  ];
+  const prepared = { ...answers };
+  for (const field of moneyFields) {
+    if (prepared[field] !== undefined && prepared[field] !== null && prepared[field] !== '') {
+      prepared[field] = manwonToWon(prepared[field]);
+    }
+  }
+  return prepared;
+}
+
 export function DiagnosisProvider({ children }) {
   const [state, dispatch] = useReducer(diagnosisReducer, initialState);
 
@@ -58,26 +96,20 @@ export function DiagnosisProvider({ children }) {
     dispatch({ type: 'SET_ANSWER', field, value });
   }, []);
 
-  const nextStep = useCallback(() => {
-    dispatch({ type: 'NEXT_STEP' });
-  }, []);
-
-  const prevStep = useCallback(() => {
-    dispatch({ type: 'PREV_STEP' });
-  }, []);
-
-  const reset = useCallback(() => {
-    dispatch({ type: 'RESET' });
-  }, []);
+  const nextStep = useCallback(() => dispatch({ type: 'NEXT_STEP' }), []);
+  const prevStep = useCallback(() => dispatch({ type: 'PREV_STEP' }), []);
+  const goToStep = useCallback((step) => dispatch({ type: 'SET_STEP', step }), []);
+  const reset = useCallback(() => dispatch({ type: 'RESET' }), []);
 
   const visibleQuestions = useMemo(
     () => getVisibleQuestions(state.answers),
     [state.answers]
   );
 
-  const getCurrentQuestion = useCallback(() => {
-    return visibleQuestions[state.currentStep] || null;
-  }, [visibleQuestions, state.currentStep]);
+  const getCurrentQuestion = useCallback(
+    () => visibleQuestions[state.currentStep] || null,
+    [visibleQuestions, state.currentStep]
+  );
 
   const getProgress = useCallback(() => {
     const total = visibleQuestions.length;
@@ -86,30 +118,30 @@ export function DiagnosisProvider({ children }) {
     return { current, total, percentage };
   }, [visibleQuestions, state.currentStep]);
 
+  /**
+   * 결과 페이지 "수정" 버튼에서 사용 — 특정 질문 id로 해당 스텝으로 이동
+   */
+  const goToQuestion = useCallback(
+    (questionId) => {
+      const idx = findQuestionIndexById(state.answers, questionId);
+      if (idx >= 0) dispatch({ type: 'SET_STEP', step: idx });
+    },
+    [state.answers]
+  );
+
+  /**
+   * 사이드 패널·미니바용 시뮬레이션 — 필수 최소 입력이 있을 때만 계산 시도
+   */
   const getSimulation = useCallback(() => {
     const a = state.answers;
-    // 최소한의 데이터가 있어야 시뮬레이션 가능
-    if (!a.totalDebt) return null;
+    // 최소 입력: 소득유형 + 결혼상태 + 신용채무 중 하나라도 시뮬레이션 의미
+    const hasMinimal =
+      a.maritalStatus && a.incomeType && (a.totalCreditDebt !== undefined && a.totalCreditDebt !== null);
+    if (!hasMinimal) return null;
 
     try {
-      const calcAnswers = {
-        ...a,
-        totalDebt: manwonToWon(a.totalDebt || 0),
-        securedDebt: manwonToWon(a.securedDebt || 0),
-        monthlyIncome: manwonToWon(a.monthlyIncome || 0),
-        monthlyRevenue: manwonToWon(a.monthlyRevenue || 0),
-        monthlyExpense: manwonToWon(a.monthlyExpense || 0),
-        assets: {
-          realEstateValue: manwonToWon(a.realEstateValue || 0),
-          realEstateMortgage: manwonToWon(a.securedDebt || 0),
-          vehicleValue: manwonToWon(a.vehicleValue || 0),
-          vehicleLoan: 0,
-          insuranceValue: manwonToWon(a.insuranceValue || 0),
-          depositValue: 0,
-          otherAssets: 0,
-        },
-      };
-      return calculateDiagnosis(calcAnswers);
+      const calcInput = prepareAnswersForCalculator(a);
+      return calculateDiagnosis(calcInput);
     } catch {
       return null;
     }
@@ -122,26 +154,34 @@ export function DiagnosisProvider({ children }) {
       setAnswer,
       nextStep,
       prevStep,
+      goToStep,
+      goToQuestion,
       reset,
       getCurrentQuestion,
       getProgress,
       getSimulation,
       visibleQuestions,
     }),
-    [state, dispatch, setAnswer, nextStep, prevStep, reset, getCurrentQuestion, getProgress, getSimulation, visibleQuestions]
+    [
+      state,
+      setAnswer,
+      nextStep,
+      prevStep,
+      goToStep,
+      goToQuestion,
+      reset,
+      getCurrentQuestion,
+      getProgress,
+      getSimulation,
+      visibleQuestions,
+    ]
   );
 
-  return (
-    <DiagnosisContext.Provider value={value}>
-      {children}
-    </DiagnosisContext.Provider>
-  );
+  return <DiagnosisContext.Provider value={value}>{children}</DiagnosisContext.Provider>;
 }
 
 export function useDiagnosis() {
-  const context = useContext(DiagnosisContext);
-  if (!context) {
-    throw new Error('useDiagnosis must be used within a DiagnosisProvider');
-  }
-  return context;
+  const ctx = useContext(DiagnosisContext);
+  if (!ctx) throw new Error('useDiagnosis must be used within DiagnosisProvider');
+  return ctx;
 }

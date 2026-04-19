@@ -2,8 +2,20 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getAllDiagnoses, deleteDiagnosis } from '../lib/db';
-import { formatKoreanMoney, manwonToWon } from '../lib/calculator';
+import { formatKoreanMoney, manwonToWon, VERDICT } from '../lib/calculator';
 import { useDiagnosis } from '../hooks/useDiagnosis';
+
+const VERDICT_LABEL = {
+  [VERDICT.POSSIBLE]: '회생 가능',
+  [VERDICT.IMPOSSIBLE]: '회생 불가',
+  [VERDICT.CONSULT]: '전문가 상담 필요',
+};
+
+const VERDICT_COLOR = {
+  [VERDICT.POSSIBLE]: '#10b981',
+  [VERDICT.IMPOSSIBLE]: '#ef4444',
+  [VERDICT.CONSULT]: '#f59e0b',
+};
 
 export default function HistoryPage() {
   const navigate = useNavigate();
@@ -21,7 +33,7 @@ export default function HistoryPage() {
   async function loadHistories() {
     try {
       const all = await getAllDiagnoses();
-      setHistories(all.filter(d => d.status === 'completed'));
+      setHistories(all.filter((d) => d.status === 'completed'));
     } catch (e) {
       console.error('이력 로드 실패:', e);
     } finally {
@@ -32,7 +44,7 @@ export default function HistoryPage() {
   async function handleDelete(id) {
     try {
       await deleteDiagnosis(id);
-      setHistories(prev => prev.filter(h => h.id !== id));
+      setHistories((prev) => prev.filter((h) => h.id !== id));
       setDeleteConfirm(null);
     } catch (e) {
       console.error('삭제 실패:', e);
@@ -51,16 +63,15 @@ export default function HistoryPage() {
   }
 
   function toggleCompare(id) {
-    setSelected(prev =>
-      prev.includes(id) ? prev.filter(s => s !== id) : prev.length < 2 ? [...prev, id] : prev
+    setSelected((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : prev.length < 2 ? [...prev, id] : prev
     );
   }
 
-  const completedItems = histories.filter(h => h.result);
+  const completedItems = histories.filter((h) => h.result);
 
   return (
     <div className="history-page">
-      {/* 헤더 */}
       <header className="app-header">
         <button className="app-header__back" onClick={() => navigate('/')}>&#8592;</button>
         <div className="app-header__progress" style={{ justifyContent: 'center' }}>
@@ -71,9 +82,7 @@ export default function HistoryPage() {
 
       <div className="page-wrap">
         {loading ? (
-          <div className="analyzing" style={{ minHeight: '50vh' }}>
-            <div className="spinner" />
-          </div>
+          <div className="analyzing" style={{ minHeight: '50vh' }}><div className="spinner" /></div>
         ) : completedItems.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '80px 0' }}>
             <p className="u-text-muted" style={{ marginBottom: 8 }}>진단 이력이 없습니다</p>
@@ -81,7 +90,6 @@ export default function HistoryPage() {
           </div>
         ) : (
           <>
-            {/* 비교 버튼 */}
             {completedItems.length >= 2 && (
               <div style={{ marginTop: 16, marginBottom: 16 }}>
                 <button
@@ -94,7 +102,6 @@ export default function HistoryPage() {
               </div>
             )}
 
-            {/* 비교 테이블 */}
             <AnimatePresence>
               {compareMode && selected.length === 2 && (
                 <motion.div
@@ -105,116 +112,117 @@ export default function HistoryPage() {
                 >
                   <div className="card">
                     <div className="section-label">비교 결과</div>
-                    <CompareTable
-                      items={selected.map(id => completedItems.find(h => h.id === id)).filter(Boolean)}
-                    />
+                    <CompareTable items={selected.map((id) => completedItems.find((h) => h.id === id)).filter(Boolean)} />
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* 이력 목록 */}
             <div className="history-list">
-            {completedItems.map((item) => (
-              <div
-                key={item.id}
-                className="history-card"
-                style={{
-                  flexDirection: 'column',
-                  alignItems: 'stretch',
-                  borderColor: compareMode && selected.includes(item.id) ? 'var(--c-point)' : undefined,
-                }}
-              >
-                {compareMode && (
-                  <div style={{ marginBottom: 8 }}>
-                    <button
-                      className={`money-preset ${selected.includes(item.id) ? 'active' : ''}`}
-                      onClick={() => toggleCompare(item.id)}
-                    >
-                      {selected.includes(item.id) ? '선택됨' : '비교 선택'}
-                    </button>
-                  </div>
-                )}
-
-                <div
-                  style={{ cursor: compareMode ? 'default' : 'pointer' }}
-                  onClick={() => !compareMode && navigate(`/result/${item.id}`)}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <div>
-                      <div className="history-card__date">
-                        {new Date(item.createdAt).toLocaleDateString('ko-KR', {
-                          year: 'numeric', month: 'long', day: 'numeric',
-                        })}
+              {completedItems.map((item) => {
+                const r = item.result || {};
+                const p = r.paymentPlan;
+                const verdictColor = VERDICT_COLOR[r.verdict] || '#6b7280';
+                return (
+                  <div
+                    key={item.id}
+                    className="history-card"
+                    style={{
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                      borderColor: compareMode && selected.includes(item.id) ? 'var(--c-point)' : undefined,
+                    }}
+                  >
+                    {compareMode && (
+                      <div style={{ marginBottom: 8 }}>
+                        <button
+                          className={`money-preset ${selected.includes(item.id) ? 'active' : ''}`}
+                          onClick={() => toggleCompare(item.id)}
+                        >
+                          {selected.includes(item.id) ? '선택됨' : '비교 선택'}
+                        </button>
                       </div>
-                      <div className="history-card__result">
-                        {item.result?.score?.grade}
+                    )}
+
+                    <div
+                      style={{ cursor: compareMode ? 'default' : 'pointer' }}
+                      onClick={() => !compareMode && navigate(`/result/${item.id}`)}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                        <div>
+                          <div className="history-card__date">
+                            {new Date(item.createdAt).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' })}
+                          </div>
+                          <div className="history-card__result" style={{ color: verdictColor }}>
+                            {VERDICT_LABEL[r.verdict] || '판정 미지정'}
+                          </div>
+                        </div>
+                        <div className="history-card__amount">
+                          <div className="history-card__amount-label">예상 면책</div>
+                          <div className="history-card__amount-value">
+                            {p ? formatKoreanMoney(p.exemption) : '-'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                        <div style={{ background: 'var(--c-bg)', borderRadius: 'var(--radius)', padding: '8px 10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>신용채무</div>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>
+                            {formatKoreanMoney(manwonToWon(item.answers?.totalCreditDebt || 0))}
+                          </div>
+                        </div>
+                        <div style={{ background: 'var(--c-point-bg)', borderRadius: 'var(--radius)', padding: '8px 10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>청산가치</div>
+                          <div className="u-text-point" style={{ fontSize: 13, fontWeight: 700 }}>
+                            {formatKoreanMoney(r.liquidation?.total || 0)}
+                          </div>
+                        </div>
+                        <div style={{ background: 'var(--c-bg)', borderRadius: 'var(--radius)', padding: '8px 10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>월 변제금</div>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>
+                            {p ? formatKoreanMoney(p.monthlyPayment) : '-'}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div className="history-card__amount">
-                      <div className="history-card__amount-label">점수</div>
-                      <div className="history-card__amount-value">{item.result?.score?.total}</div>
-                    </div>
-                  </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                    <div style={{ background: 'var(--c-bg)', borderRadius: 'var(--radius)', padding: '8px 10px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>총 채무</div>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>{formatKoreanMoney(manwonToWon(item.answers?.totalDebt || 0))}</div>
-                    </div>
-                    <div style={{ background: 'var(--c-point-bg)', borderRadius: 'var(--radius)', padding: '8px 10px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>탕감액</div>
-                      <div className="u-text-point" style={{ fontSize: 13, fontWeight: 700 }}>{formatKoreanMoney(item.result?.defaultPeriod?.reliefAmount || 0)}</div>
-                    </div>
-                    <div style={{ background: 'var(--c-bg)', borderRadius: 'var(--radius)', padding: '8px 10px', textAlign: 'center' }}>
-                      <div style={{ fontSize: 11, color: 'var(--c-text-muted)', marginBottom: 2 }}>월 변제금</div>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>{formatKoreanMoney(item.result?.defaultPeriod?.monthlyPayment || 0)}</div>
-                    </div>
+                    {!compareMode && (
+                      <div style={{ display: 'flex', gap: 8, paddingTop: 12, borderTop: '1px solid var(--c-border-light)', marginTop: 12 }}>
+                        <button className="btn-secondary" style={{ flex: 1, height: 40, fontSize: 13 }} onClick={() => handleRetest(item)}>
+                          수정하여 재진단
+                        </button>
+                        <button
+                          className="btn-secondary"
+                          style={{ height: 40, fontSize: 13, color: 'var(--c-danger)', borderColor: 'var(--c-danger)' }}
+                          onClick={() => setDeleteConfirm(item.id)}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
-
-                {!compareMode && (
-                  <div style={{ display: 'flex', gap: 8, paddingTop: 12, borderTop: '1px solid var(--c-border-light)', marginTop: 12 }}>
-                    <button className="btn-secondary" style={{ flex: 1, height: 40, fontSize: 13 }} onClick={() => handleRetest(item)}>
-                      수정하여 재진단
-                    </button>
-                    <button
-                      className="btn-secondary"
-                      style={{ height: 40, fontSize: 13, color: 'var(--c-danger)', borderColor: 'var(--c-danger)' }}
-                      onClick={() => setDeleteConfirm(item.id)}
-                    >
-                      삭제
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+                );
+              })}
             </div>
           </>
         )}
       </div>
 
-      {/* 삭제 확인 모달 */}
       <AnimatePresence>
         {deleteConfirm && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="resume-modal"
             onClick={() => setDeleteConfirm(null)}
           >
             <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
+              initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
               className="resume-modal__card"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="resume-modal__title">진단 이력 삭제</div>
-              <div className="resume-modal__desc">
-                이 진단 이력을 삭제할까요? 삭제 후 복구할 수 없습니다.
-              </div>
+              <div className="resume-modal__desc">이 진단 이력을 삭제할까요? 삭제 후 복구할 수 없습니다.</div>
               <div className="resume-modal__actions">
                 <button className="btn-secondary" onClick={() => setDeleteConfirm(null)}>취소</button>
                 <button className="btn-primary" style={{ background: 'var(--c-danger)' }} onClick={() => handleDelete(deleteConfirm)}>삭제</button>
@@ -230,15 +238,17 @@ export default function HistoryPage() {
 function CompareTable({ items }) {
   if (items.length !== 2) return null;
   const [a, b] = items;
+  const pa = a.result?.paymentPlan;
+  const pb = b.result?.paymentPlan;
 
   const rows = [
     { label: '날짜', a: new Date(a.createdAt).toLocaleDateString('ko-KR'), b: new Date(b.createdAt).toLocaleDateString('ko-KR') },
-    { label: '점수', a: a.result?.score?.total, b: b.result?.score?.total },
-    { label: '등급', a: a.result?.score?.grade, b: b.result?.score?.grade },
-    { label: '총 채무', a: formatKoreanMoney(manwonToWon(a.answers?.totalDebt || 0)), b: formatKoreanMoney(manwonToWon(b.answers?.totalDebt || 0)) },
-    { label: '탕감액', a: formatKoreanMoney(a.result?.defaultPeriod?.reliefAmount || 0), b: formatKoreanMoney(b.result?.defaultPeriod?.reliefAmount || 0) },
-    { label: '월 변제금', a: formatKoreanMoney(a.result?.defaultPeriod?.monthlyPayment || 0), b: formatKoreanMoney(b.result?.defaultPeriod?.monthlyPayment || 0) },
-    { label: '변제율', a: `${a.result?.defaultPeriod?.reliefRate || 0}%`, b: `${b.result?.defaultPeriod?.reliefRate || 0}%` },
+    { label: '판정', a: VERDICT_LABEL[a.result?.verdict] || '-', b: VERDICT_LABEL[b.result?.verdict] || '-' },
+    { label: '신용채무', a: formatKoreanMoney(manwonToWon(a.answers?.totalCreditDebt || 0)), b: formatKoreanMoney(manwonToWon(b.answers?.totalCreditDebt || 0)) },
+    { label: '청산가치', a: formatKoreanMoney(a.result?.liquidation?.total || 0), b: formatKoreanMoney(b.result?.liquidation?.total || 0) },
+    { label: '월 변제금', a: pa ? formatKoreanMoney(pa.monthlyPayment) : '-', b: pb ? formatKoreanMoney(pb.monthlyPayment) : '-' },
+    { label: '변제 기간', a: pa ? `${pa.period}개월` : '-', b: pb ? `${pb.period}개월` : '-' },
+    { label: '예상 면책', a: pa ? formatKoreanMoney(pa.exemption) : '-', b: pb ? formatKoreanMoney(pb.exemption) : '-' },
   ];
 
   return (
@@ -251,7 +261,7 @@ function CompareTable({ items }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map(r => (
+        {rows.map((r) => (
           <tr key={r.label} style={{ borderBottom: '1px solid var(--c-border-light)' }}>
             <td style={{ padding: '8px 0', color: 'var(--c-text-sub)' }}>{r.label}</td>
             <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: 600 }}>{r.a}</td>

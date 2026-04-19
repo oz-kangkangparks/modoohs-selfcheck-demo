@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDiagnosis } from '../hooks/useDiagnosis';
+import { useDiagnosis, prepareAnswersForCalculator } from '../hooks/useDiagnosis';
 import { saveDiagnosis } from '../lib/db';
-import { calculateDiagnosis, manwonToWon } from '../lib/calculator';
+import { calculateDiagnosis } from '../lib/calculator';
 
 const steps = [
-  { label: '채무 분석 중...', duration: 700 },
-  { label: '소득 검증 중...', duration: 600 },
-  { label: '변제금 계산 중...', duration: 600 },
-  { label: '결과 생성 중...', duration: 600 },
+  { label: '가족·소득 분석 중...', duration: 700 },
+  { label: '자산·부채 분석 중...', duration: 700 },
+  { label: '청산가치 계산 중...', duration: 700 },
+  { label: '변제 계획 수립 중...', duration: 700 },
 ];
 
 export default function AnalyzingPage() {
@@ -17,10 +17,8 @@ export default function AnalyzingPage() {
   const [currentStep, setCurrentStep] = useState(0);
 
   useEffect(() => {
-    let timer;
     const stepTimers = [];
     let delay = 0;
-
     steps.forEach((step, i) => {
       const t = setTimeout(() => setCurrentStep(i), delay);
       stepTimers.push(t);
@@ -28,29 +26,10 @@ export default function AnalyzingPage() {
     });
 
     const totalDuration = steps.reduce((sum, s) => sum + s.duration, 0);
-
-    timer = setTimeout(async () => {
+    const finalTimer = setTimeout(async () => {
       try {
-        const a = state.answers;
-        const calcAnswers = {
-          ...a,
-          totalDebt: manwonToWon(a.totalDebt || 0),
-          securedDebt: manwonToWon(a.securedDebt || 0),
-          monthlyIncome: manwonToWon(a.monthlyIncome || 0),
-          monthlyRevenue: manwonToWon(a.monthlyRevenue || 0),
-          monthlyExpense: manwonToWon(a.monthlyExpense || 0),
-          assets: {
-            realEstateValue: manwonToWon(a.realEstateValue || 0),
-            realEstateMortgage: manwonToWon(a.securedDebt || 0),
-            vehicleValue: manwonToWon(a.vehicleValue || 0),
-            vehicleLoan: 0,
-            insuranceValue: manwonToWon(a.insuranceValue || 0),
-            depositValue: 0,
-            otherAssets: 0,
-          },
-        };
-
-        const result = calculateDiagnosis(calcAnswers);
+        const calcInput = prepareAnswersForCalculator(state.answers);
+        const result = calculateDiagnosis(calcInput);
         const id = state.diagnosisId || `diag_${Date.now()}`;
 
         await saveDiagnosis({
@@ -63,7 +42,6 @@ export default function AnalyzingPage() {
 
         dispatch({ type: 'SET_DIAGNOSIS_ID', id });
         dispatch({ type: 'SET_STATUS', status: 'completed' });
-
         setTimeout(() => navigate(`/result/${id}`, { replace: true }), 300);
       } catch (e) {
         console.error('결과 생성 실패:', e);
@@ -72,9 +50,10 @@ export default function AnalyzingPage() {
     }, totalDuration + 200);
 
     return () => {
-      clearTimeout(timer);
       stepTimers.forEach(clearTimeout);
+      clearTimeout(finalTimer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
