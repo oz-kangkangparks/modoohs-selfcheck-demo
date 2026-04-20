@@ -153,24 +153,13 @@ export function calcHousingDeduction({ housingType, monthlyRent, residenceSido, 
 export function calcDisposableIncome({
   incomeType,
   monthlyIncome = 0,
-  monthlyRevenue = 0,
-  monthlyExpense = 0,
   familyCount,
   housingDeduction = 0,
 }) {
-  let income = 0;
-  switch (incomeType) {
-    case '급여':
-    case '연금':
-      income = Number(monthlyIncome) || 0;
-      break;
-    case '영업사업':
-      income = Math.max((Number(monthlyRevenue) || 0) - (Number(monthlyExpense) || 0), 0);
-      break;
-    case '무직':
-    default:
-      income = 0;
-  }
+  // incomeType은 배열(다중 선택). 구버전 문자열 호환 위해 정규화.
+  const types = Array.isArray(incomeType) ? incomeType : incomeType ? [incomeType] : [];
+  const isJobless = types.length === 0 || (types.length === 1 && types[0] === '무직');
+  const income = isJobless ? 0 : Number(monthlyIncome) || 0;
 
   const livingExpense = calcLivingExpense(familyCount);
   return income - livingExpense - (housingDeduction || 0);
@@ -564,8 +553,6 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
   const disposableIncome = calcDisposableIncome({
     incomeType: answers.incomeType,
     monthlyIncome: answers.monthlyIncome,
-    monthlyRevenue: answers.monthlyRevenue,
-    monthlyExpense: answers.monthlyExpense,
     familyCount,
     housingDeduction,
   });
@@ -631,12 +618,20 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     });
   }
 
-  if (answers.incomeType === '무직') {
-    warnings.push({
-      severity: 'error',
-      title: '현재 소득이 없습니다',
-      detail: '개인회생은 매월 꾸준한 소득이 있어야 신청할 수 있어요. 취업 후 다시 진단받아보시길 권장합니다.',
-    });
+  {
+    const t = Array.isArray(answers.incomeType)
+      ? answers.incomeType
+      : answers.incomeType
+        ? [answers.incomeType]
+        : [];
+    const onlyJobless = t.length === 0 || (t.length === 1 && t[0] === '무직');
+    if (onlyJobless) {
+      warnings.push({
+        severity: 'error',
+        title: '현재 소득이 없습니다',
+        detail: '개인회생은 매월 꾸준한 소득이 있어야 신청할 수 있어요. 취업 후 다시 진단받아보시길 권장합니다.',
+      });
+    }
   }
 
   if (answers.pastHistory === '회생면책(5년이내)') {

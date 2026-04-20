@@ -62,8 +62,6 @@ export function prepareAnswersForCalculator(answers) {
   const moneyFields = [
     'totalCreditDebt',
     'monthlyIncome',
-    'monthlyRevenue',
-    'monthlyExpense',
     'monthlyRent',
     'realEstateValue',
     'realEstateMortgage',
@@ -135,8 +133,9 @@ export function DiagnosisProvider({ children }) {
   const getSimulation = useCallback(() => {
     const a = state.answers;
     // 최소 입력: 소득유형 + 결혼상태 + 신용채무 중 하나라도 시뮬레이션 의미
+    const incomeTypes = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
     const hasMinimal =
-      a.maritalStatus && a.incomeType && (a.totalCreditDebt !== undefined && a.totalCreditDebt !== null);
+      a.maritalStatus && incomeTypes.length > 0 && (a.totalCreditDebt !== undefined && a.totalCreditDebt !== null);
     if (!hasMinimal) return null;
 
     try {

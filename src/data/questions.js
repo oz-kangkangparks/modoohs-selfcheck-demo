@@ -145,59 +145,44 @@ const questions = [
     fields: [
       {
         field: 'incomeType',
-        subType: 'select',
-        label: '소득 유형',
-        options: [
-          { value: '급여', label: '급여 (직장인)' },
-          { value: '영업사업', label: '영업·사업 (자영업)' },
-          { value: '연금', label: '연금' },
-          { value: '무직', label: '소득 없음' },
-        ],
+        subType: 'multiSelect',
+        label: '소득 유형 (해당되는 것 모두 선택)',
+        hint: '직장 다니면서 부업·연금·기초생활수급 등을 함께 받는 경우 여러 개 선택해주세요.',
         columns: 2,
+        options: [
+          { value: '급여', label: '급여\n(직장인)' },
+          { value: '영업사업', label: '사업\n(법인·개인)' },
+          { value: '연금', label: '연금\n(국민연금·기초연금 등)' },
+          { value: '무직', label: '소득 없음', exclusive: true },
+        ],
       },
       {
         field: 'monthlyIncome',
         subType: 'money',
-        label: '월 평균 급여 (세전)',
-        hint: '세금 공제 전 금액. 통장 입금액이 아니라 급여명세서 맨 위 큰 금액입니다.',
-        presets: [200, 300, 400, 500],
-        presetLabels: ['200만', '300만', '400만', '500만'],
-        showIf: (a) => a.incomeType === '급여',
-      },
-      {
-        field: 'monthlyRevenue',
-        subType: 'money',
-        label: '월 평균 매출',
-        hint: '경비 빼기 전 총매출',
-        presets: [500, 1000, 2000, 3000],
-        presetLabels: ['500만', '1천', '2천', '3천'],
-        showIf: (a) => a.incomeType === '영업사업',
-      },
-      {
-        field: 'monthlyExpense',
-        subType: 'money',
-        label: '월 평균 필요경비',
-        hint: '재료비·월세·인건비 등 사업에 꼭 드는 비용',
-        presets: [300, 500, 1000, 2000],
-        presetLabels: ['300만', '500만', '1천', '2천'],
-        showIf: (a) => a.incomeType === '영업사업',
-      },
-      {
-        field: 'monthlyIncome',
-        subType: 'money',
-        label: '월 연금 수령액',
-        presets: [50, 100, 150, 200],
-        presetLabels: ['50만', '100만', '150만', '200만'],
-        showIf: (a) => a.incomeType === '연금',
+        label: '월 평균 총 소득 (세전·합산)',
+        hint:
+          '선택하신 모든 소득을 합산해 입력해주세요. ' +
+          '급여는 세금 떼기 전 금액(통장 입금액 아님), ' +
+          '사업소득은 매출에서 인건비·임대료·재료비 등 필요경비를 뺀 순소득 기준으로 합산합니다.',
+        showIf: (a) => {
+          const t = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
+          return t.length > 0 && !(t.length === 1 && t[0] === '무직');
+        },
       },
     ],
     helpCard: {
-      title: '세전 급여가 뭐예요?',
-      easy: '세금을 떼기 전 원래 월급이에요. 통장에 들어오는 금액보다 많습니다.',
-      example: '통장 250만 → 세전은 보통 290~310만원',
-      tip: '급여명세서·원천징수영수증·홈택스에서 확인 가능합니다.',
+      title: '여러 소득이 있을 때 어떻게 입력하나요?',
+      easy:
+        '직장에 다니면서 개인사업자로 부업을 하거나, 국민연금·기초생활수급을 함께 받는 분이 많아요. ' +
+        '해당되는 유형을 모두 선택하시고, 금액은 모든 소득을 합한 월 평균 금액을 입력하시면 됩니다.',
+      cases: [
+        { q: '급여 + 사업소득이 같이 있어요', a: '두 가지 모두 체크하고, 세전 급여 + 사업 순소득(매출 − 필요경비)을 합산해 입력하세요.' },
+        { q: '사업소득은 어떻게 계산하나요?', a: '월 매출에서 인건비·임대료·재료비 등 사업에 꼭 드는 비용(필요경비)을 뺀 순소득을 기준으로 합산해주세요.' },
+        { q: '국민연금·기초생활수급도 소득인가요?', a: '네, 매월 정기적으로 받는 금액은 모두 소득에 포함합니다. 해당 항목을 체크하고 금액에 더해 입력해주세요.' },
+      ],
+      tip: '세전 급여는 급여명세서·원천징수영수증·홈택스에서 확인 가능합니다.',
     },
-    aiSuggestions: ['세전이랑 세후 차이가 뭐예요?', '매출과 순이익 차이가 뭔가요?', '무직이면 회생 불가능한가요?'],
+    aiSuggestions: ['직장인인데 사업도 하고 있어요', '사업소득 순매출 계산이 헷갈려요', '연금이랑 급여 같이 받으면 어떻게 적나요?'],
   },
 
   // =======================================================
@@ -226,8 +211,6 @@ const questions = [
         subType: 'money',
         label: '월세 금액',
         hint: '관리비 제외 순수 월세',
-        presets: [30, 50, 70, 100],
-        presetLabels: ['30만', '50만', '70만', '100만'],
         showIf: (a) => a.housingType === '월세',
       },
     ],
@@ -257,16 +240,12 @@ const questions = [
         subType: 'money',
         label: 'KB시세 또는 네이버 부동산 기준 시세',
         hint: '정확한 감정가가 아니어도 대략적인 시세면 충분합니다',
-        presets: [10000, 20000, 30000, 50000],
-        presetLabels: ['1억', '2억', '3억', '5억'],
       },
       {
         field: 'realEstateMortgage',
         subType: 'money',
         label: '담보대출 잔액 (없으면 0)',
         hint: '주택담보대출 현재 남은 잔액',
-        presets: [0, 5000, 10000, 20000],
-        presetLabels: ['0', '5천', '1억', '2억'],
       },
       {
         field: 'realEstateOwnership',
@@ -304,8 +283,6 @@ const questions = [
         field: 'jeonseAmount',
         subType: 'money',
         label: '전세 보증금',
-        presets: [5000, 10000, 15000, 20000],
-        presetLabels: ['5천', '1억', '1.5억', '2억'],
       },
       {
         field: 'jeonseLien',
@@ -323,8 +300,6 @@ const questions = [
         subType: 'money',
         label: '질권설정 금액',
         hint: '보증공사에 설정된 전세대출 금액 (보통 전세대출 원금과 같아요)',
-        presets: [5000, 10000, 15000],
-        presetLabels: ['5천', '1억', '1.5억'],
         showIf: (a) => a.jeonseLien === 'yes',
       },
     ],
@@ -377,15 +352,11 @@ const questions = [
         field: 'vehicleValue',
         subType: 'money',
         label: '차량 시세 (SK엔카·K Car 등 중고 시세)',
-        presets: [500, 1000, 2000, 3000],
-        presetLabels: ['500만', '1천', '2천', '3천'],
       },
       {
         field: 'vehicleLoan',
         subType: 'money',
         label: '차량 담보대출 잔액 (없으면 0)',
-        presets: [0, 500, 1000, 2000],
-        presetLabels: ['0', '500만', '1천', '2천'],
       },
     ],
     helpCard: {
@@ -414,8 +385,6 @@ const questions = [
         subType: 'money',
         label: '예금·적금 합계',
         hint: '은행 예금 + 적금 잔액 전체',
-        presets: [0, 100, 300, 500],
-        presetLabels: ['0', '100만', '300만', '500만'],
         showIf: (a) => (a.otherAssets || []).includes('deposit'),
       },
       // 보험
@@ -435,8 +404,6 @@ const questions = [
         subType: 'money',
         label: '보험 해약환급금 합계',
         hint: '지금 해지하면 돌려받는 금액 (보험사 앱·콜센터에서 확인)',
-        presets: [0, 100, 300, 500],
-        presetLabels: ['0', '100만', '300만', '500만'],
         showIf: (a) => (a.otherAssets || []).includes('insurance') && a.insuranceKnown === 'yes',
       },
       {
@@ -444,8 +411,6 @@ const questions = [
         subType: 'money',
         label: '보험 약관대출 잔액 (없으면 0)',
         hint: '보험 계약을 담보로 받은 대출',
-        presets: [0, 100, 300, 500],
-        presetLabels: ['0', '100만', '300만', '500만'],
         showIf: (a) => (a.otherAssets || []).includes('insurance') && a.insuranceKnown === 'yes',
       },
       // 청약
@@ -454,16 +419,12 @@ const questions = [
         subType: 'money',
         label: '청약 해약환급금',
         hint: '주택청약 해지 시 돌려받는 금액',
-        presets: [0, 100, 500, 1000],
-        presetLabels: ['0', '100만', '500만', '1천'],
         showIf: (a) => (a.otherAssets || []).includes('account'),
       },
       {
         field: 'accountCollateralLoan',
         subType: 'money',
         label: '청약 담보대출 잔액 (없으면 0)',
-        presets: [0, 100, 500],
-        presetLabels: ['0', '100만', '500만'],
         showIf: (a) => (a.otherAssets || []).includes('account'),
       },
       // 주식
@@ -471,8 +432,6 @@ const questions = [
         field: 'stocksValue',
         subType: 'money',
         label: '주식 평가액 (현재 시세 기준)',
-        presets: [0, 100, 500, 1000],
-        presetLabels: ['0', '100만', '500만', '1천'],
         showIf: (a) => (a.otherAssets || []).includes('stocks'),
       },
       // 코인
@@ -480,8 +439,6 @@ const questions = [
         field: 'cryptoValue',
         subType: 'money',
         label: '코인 평가액 (현재 시세 기준)',
-        presets: [0, 100, 500, 1000],
-        presetLabels: ['0', '100만', '500만', '1천'],
         showIf: (a) => (a.otherAssets || []).includes('crypto'),
       },
     ],
@@ -520,8 +477,6 @@ const questions = [
         subType: 'money',
         label: '예상 퇴직금',
         hint: '지금 바로 퇴사한다고 가정했을 때 받을 예상 금액',
-        presets: [500, 1000, 2000, 3000],
-        presetLabels: ['500만', '1천', '2천', '3천'],
         showIf: (a) => a.retirementType === 'severance',
       },
     ],
@@ -542,8 +497,6 @@ const questions = [
     title: '담보 없이 빌린 돈은 얼마인가요?',
     subtitle: '신용대출·카드값·사채 등 모두 합친 총액',
     unit: '만원',
-    presets: [3000, 5000, 10000, 20000],
-    presetLabels: ['3천', '5천', '1억', '2억'],
     validation: { required: true, min: 0 },
     helpCard: {
       title: '어떤 빚을 넣어야 하나요?',

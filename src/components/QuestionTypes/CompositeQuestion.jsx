@@ -27,6 +27,7 @@
 import { useState, useEffect } from 'react';
 import { regions } from '../../data/regions';
 import { formatKoreanMoney, manwonToWon } from '../../lib/calculator';
+import { MONEY_PRESETS, MONEY_PRESET_LABELS } from '../../lib/moneyPresets';
 
 export default function CompositeQuestion({ question, allAnswers, onFieldChange }) {
   const visibleFields = (question.fields || []).filter(
@@ -160,8 +161,9 @@ function SubMoney({ field, value, onChange }) {
     setLocal(value ?? '');
   }, [value]);
   const unit = field.unit || '만원';
-  const presets = field.presets || [];
-  const presetLabels = field.presetLabels || presets.map((p) => `${p}만`);
+  const presets = field.presets || MONEY_PRESETS;
+  const presetLabels =
+    field.presetLabels || (field.presets ? presets.map((p) => `${p}만`) : MONEY_PRESET_LABELS);
 
   function handle(e) {
     const raw = e.target.value.replace(/[^0-9]/g, '');
@@ -170,28 +172,41 @@ function SubMoney({ field, value, onChange }) {
     onChange(num === '' ? undefined : num);
   }
 
+  function handlePreset(p) {
+    const current = typeof local === 'number' ? local : 0;
+    const next = current + p;
+    setLocal(next);
+    onChange(next);
+  }
+
+  function handleReset() {
+    setLocal(0);
+    onChange(0);
+  }
+
   const koreanMoney =
     typeof local === 'number' && local > 0 ? formatKoreanMoney(manwonToWon(local)) : null;
 
   return (
     <div>
       {presets.length > 0 && (
-        <div className="money-presets" style={{ marginBottom: 10 }}>
+        <div className="money-presets">
           {presets.map((p, i) => (
             <button
               type="button"
               key={p}
-              className={`money-preset ${local === p ? 'active' : ''}`}
-              onClick={() => {
-                setLocal(p);
-                onChange(p);
-              }}
+              className="money-preset"
+              onClick={() => handlePreset(p)}
             >
-              {presetLabels[i]}
+              +{presetLabels[i]}
             </button>
           ))}
         </div>
       )}
+      <button type="button" className="money-reset" onClick={handleReset}>
+        <span className="money-reset__icon" aria-hidden="true">↺</span>
+        초기화
+      </button>
       <div className="money-field">
         <input
           type="number"
@@ -275,6 +290,8 @@ function SubRegionPicker({ field, allAnswers, onChange }) {
 function SubMultiSelect({ field, value, onChange }) {
   const opts = field.options || [];
   const selected = Array.isArray(value) ? value : [];
+  const cols = field.columns || 1;
+  const isSingleColumn = cols === 1;
 
   function toggle(v) {
     const opt = opts.find((o) => o.value === v);
@@ -292,7 +309,13 @@ function SubMultiSelect({ field, value, onChange }) {
   }
 
   return (
-    <div>
+    <div
+      style={
+        isSingleColumn
+          ? undefined
+          : { display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 10 }
+      }
+    >
       {opts.map((opt) => {
         const isSel = selected.includes(opt.value);
         return (
@@ -300,10 +323,16 @@ function SubMultiSelect({ field, value, onChange }) {
             key={opt.value}
             className={`option-card ${isSel ? 'selected' : ''}`}
             onClick={() => toggle(opt.value)}
+            style={{
+              justifyContent: 'flex-start',
+              minHeight: opt.desc ? undefined : 48,
+            }}
           >
             <div className="option-card__checkbox">{isSel && '\u2713'}</div>
-            <div>
-              <div className="option-card__label">{opt.label}</div>
+            <div style={{ textAlign: 'left', flex: 1 }}>
+              <div className="option-card__label" style={{ whiteSpace: 'pre-line' }}>
+                {opt.label}
+              </div>
               {opt.desc && <div className="option-card__desc">{opt.desc}</div>}
             </div>
           </div>

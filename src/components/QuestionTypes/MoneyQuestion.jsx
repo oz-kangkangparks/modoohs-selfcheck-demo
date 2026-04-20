@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { formatKoreanMoney, manwonToWon } from '../../lib/calculator';
+import { MONEY_PRESETS, MONEY_PRESET_LABELS } from '../../lib/moneyPresets';
 
 export default function MoneyQuestion({ question, value, onChange }) {
   const [inputValue, setInputValue] = useState(value || '');
-  const presets = question.presets || [];
-  const presetLabels = question.presetLabels || presets.map(p => `${p}만`);
+  const presets = question.presets || MONEY_PRESETS;
+  const presetLabels =
+    question.presetLabels || (question.presets ? presets.map((p) => `${p}만`) : MONEY_PRESET_LABELS);
   const unit = question.unit || '만원';
 
   useEffect(() => {
@@ -19,8 +21,15 @@ export default function MoneyQuestion({ question, value, onChange }) {
   }
 
   function handlePreset(preset) {
-    setInputValue(preset);
-    onChange(preset);
+    const current = typeof inputValue === 'number' ? inputValue : 0;
+    const next = current + preset;
+    setInputValue(next);
+    onChange(next);
+  }
+
+  function handleReset() {
+    setInputValue(0);
+    onChange(0);
   }
 
   const warnings = [];
@@ -38,18 +47,25 @@ export default function MoneyQuestion({ question, value, onChange }) {
 
   return (
     <div className="money-input-wrap">
-      {/* 프리셋 */}
+      {/* 프리셋 (4×2 grid, 누를 때마다 가산) */}
       <div className="money-presets">
         {presets.map((p, i) => (
           <button
             key={p}
-            className={`money-preset ${inputValue === p ? 'active' : ''}`}
+            type="button"
+            className="money-preset"
             onClick={() => handlePreset(p)}
           >
-            {presetLabels[i]}
+            +{presetLabels[i]}
           </button>
         ))}
       </div>
+
+      {/* 초기화 (금액을 0원으로) */}
+      <button type="button" className="money-reset" onClick={handleReset}>
+        <span className="money-reset__icon" aria-hidden="true">↺</span>
+        초기화
+      </button>
 
       {/* 금액 입력 */}
       <div className="money-field">

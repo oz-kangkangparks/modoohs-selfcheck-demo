@@ -451,12 +451,21 @@ function InputSummaryCards({ answers, result, onEdit }) {
     {
       title: '소득',
       editId: 'incomeGroup',
-      rows: [
-        ['소득 유형', A('incomeType')],
-        ...(a.incomeType === '영업사업'
-          ? [['월 매출', money('monthlyRevenue')], ['월 경비', money('monthlyExpense')]]
-          : [['월 소득', money('monthlyIncome')]]),
-      ],
+      rows: (() => {
+        const incomeLabelMap = {
+          급여: '급여',
+          영업사업: '사업',
+          연금: '연금',
+          무직: '소득 없음',
+        };
+        const types = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
+        const typeText = types.length === 0 ? '-' : types.map((t) => incomeLabelMap[t] || t).join(', ');
+        const onlyJobless = types.length === 1 && types[0] === '무직';
+        return [
+          ['소득 유형', typeText],
+          ...(onlyJobless ? [] : [['월 총 소득 (합산)', money('monthlyIncome')]]),
+        ];
+      })(),
     },
     {
       title: '주거',
