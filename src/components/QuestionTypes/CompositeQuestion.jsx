@@ -156,10 +156,24 @@ function SubStepper({ field, value, onChange }) {
 
 // ------------------ money (만원) ------------------
 function SubMoney({ field, value, onChange }) {
-  const [local, setLocal] = useState(value ?? '');
+  const [local, setLocal] = useState(value ?? 0);
+  const [focused, setFocused] = useState(false);
+
+  // 마운트 시 값이 비어 있으면 0으로 초기화 (다음 버튼 활성화 위함)
   useEffect(() => {
-    setLocal(value ?? '');
+    if (value === undefined || value === null || value === '') {
+      onChange(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 외부 value 변경(예: 결과 페이지에서 수정 진입) 동기화
+  useEffect(() => {
+    if (value !== undefined && value !== null && value !== '') {
+      setLocal(value);
+    }
   }, [value]);
+
   const unit = field.unit || '만원';
   const presets = field.presets || MONEY_PRESETS;
   const presetLabels =
@@ -167,9 +181,9 @@ function SubMoney({ field, value, onChange }) {
 
   function handle(e) {
     const raw = e.target.value.replace(/[^0-9]/g, '');
-    const num = raw === '' ? '' : parseInt(raw, 10);
+    const num = raw === '' ? 0 : parseInt(raw, 10);
     setLocal(num);
-    onChange(num === '' ? undefined : num);
+    onChange(num);
   }
 
   function handlePreset(p) {
@@ -212,8 +226,16 @@ function SubMoney({ field, value, onChange }) {
           type="number"
           inputMode="numeric"
           className="money-field__input"
-          value={local === '' || local === undefined ? '' : local}
+          value={focused && local === 0 ? '' : local}
           onChange={handle}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            if (local === '' || local === undefined || local === null) {
+              setLocal(0);
+              onChange(0);
+            }
+          }}
           placeholder="0"
         />
         <span className="money-field__unit">{unit}</span>

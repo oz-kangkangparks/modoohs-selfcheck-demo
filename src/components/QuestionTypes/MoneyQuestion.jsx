@@ -3,21 +3,33 @@ import { formatKoreanMoney, manwonToWon } from '../../lib/calculator';
 import { MONEY_PRESETS, MONEY_PRESET_LABELS } from '../../lib/moneyPresets';
 
 export default function MoneyQuestion({ question, value, onChange }) {
-  const [inputValue, setInputValue] = useState(value || '');
+  const [inputValue, setInputValue] = useState(value ?? 0);
+  const [focused, setFocused] = useState(false);
   const presets = question.presets || MONEY_PRESETS;
   const presetLabels =
     question.presetLabels || (question.presets ? presets.map((p) => `${p}만`) : MONEY_PRESET_LABELS);
   const unit = question.unit || '만원';
 
+  // 마운트 시 값이 비어 있으면 0으로 초기화 (다음 버튼 활성화 위함)
   useEffect(() => {
-    setInputValue(value ?? '');
+    if (value === undefined || value === null || value === '') {
+      onChange(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 외부 value 변경(예: 결과 페이지에서 수정 진입) 동기화
+  useEffect(() => {
+    if (value !== undefined && value !== null && value !== '') {
+      setInputValue(value);
+    }
   }, [value]);
 
   function handleInputChange(e) {
     const raw = e.target.value.replace(/[^0-9]/g, '');
-    const num = raw === '' ? '' : parseInt(raw, 10);
+    const num = raw === '' ? 0 : parseInt(raw, 10);
     setInputValue(num);
-    onChange(num === '' ? undefined : num);
+    onChange(num);
   }
 
   function handlePreset(preset) {
@@ -73,8 +85,16 @@ export default function MoneyQuestion({ question, value, onChange }) {
           type="number"
           inputMode="numeric"
           className="money-field__input"
-          value={inputValue === '' || inputValue === undefined ? '' : inputValue}
+          value={focused && inputValue === 0 ? '' : inputValue}
           onChange={handleInputChange}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            if (inputValue === '' || inputValue === undefined || inputValue === null) {
+              setInputValue(0);
+              onChange(0);
+            }
+          }}
           placeholder="0"
         />
         <span className="money-field__unit">{unit}</span>
