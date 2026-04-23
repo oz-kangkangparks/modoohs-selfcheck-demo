@@ -63,10 +63,11 @@ export function prepareAnswersForCalculator(answers) {
     'totalCreditDebt',
     'monthlyIncome',
     'monthlyRent',
+    'housingDeposit',
     'realEstateValue',
     'realEstateMortgage',
     'jeonseAmount',
-    'jeonseLienAmount',
+    'jeonseLoanAmount',
     'vehicleValue',
     'vehicleLoan',
     'depositValue',
@@ -77,6 +78,16 @@ export function prepareAnswersForCalculator(answers) {
     'stocksValue',
     'cryptoValue',
     'retirementAmount',
+    // 사업자회생 — 사업장 자산
+    'businessRentDeposit',
+    'businessMonthlyRent',
+    'businessEquipmentValue',
+    // 이혼 양육비 — 가용소득 계산에 반영됨
+    'childSupportAmount',
+    // 기혼+자녀+맞벌이 배우자 간이조사 — 참고자료(계산 미반영), 표시 통일 위해 변환
+    'spouseIncomeCustom',
+    'spouseAssetCustom',
+    'spouseDebtCustom',
   ];
   const prepared = { ...answers };
   for (const field of moneyFields) {

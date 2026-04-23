@@ -13,12 +13,13 @@ import { useState, useEffect } from 'react';
 import { getDiagnosis } from '../lib/db';
 import { useDiagnosis } from '../hooks/useDiagnosis';
 import { formatKoreanMoney, manwonToWon, VERDICT } from '../lib/calculator';
+import { resolveJeonseExemption } from '../data/regions';
 
 // =========================================================================
 // 판정 스타일
 // =========================================================================
 const VERDICT_STYLE = {
-  [VERDICT.POSSIBLE]:   { color: '#10b981', gradient: 'linear-gradient(135deg, #10b981, #0f766e)', label: '회생 가능' },
+  [VERDICT.POSSIBLE]:   { color: 'var(--c-primary)', gradient: 'linear-gradient(135deg, var(--c-primary), #6366f1)', label: '회생 가능' },
   [VERDICT.IMPOSSIBLE]: { color: '#ef4444', gradient: 'linear-gradient(135deg, #ef4444, #991b1b)', label: '회생 불가' },
   [VERDICT.CONSULT]:    { color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b, #b45309)', label: '전문가 상담 필요' },
 };
@@ -105,6 +106,9 @@ export default function ResultPage() {
         {/* 주의 사항 */}
         {r.warnings && r.warnings.length > 0 && <WarningsCard warnings={r.warnings} />}
 
+        {/* 법원 실무 안내 (가족 구성 기반) */}
+        {r.notices && r.notices.length > 0 && <NoticesCard notices={r.notices} />}
+
         {/* 질권 모름: 두 케이스 비교 */}
         {r.hasAlternate && (
           <AlternateCard
@@ -121,10 +125,10 @@ export default function ResultPage() {
         )}
 
         {/* 내 재산 요약 — 단순 합계 (기술용어 제거) */}
-        <MyAssetsCard result={r} />
+        <MyAssetsCard result={r} answers={a} />
 
         {/* 내 채무 — 단순 */}
-        <MyDebtCard creditDebt={r.creditDebt} answers={a} />
+        <MyDebtCard result={r} answers={a} />
 
         {/* 입력 정보 요약 — 각 카테고리 [수정] 버튼 */}
         <InputSummaryCards answers={a} result={r} onEdit={handleEdit} />
@@ -138,13 +142,13 @@ export default function ResultPage() {
         {/* 전문가 CTA */}
         <div className="result-cta-section">
           <h2 className="result-cta-section__title">전문가 상담이 필요하신가요?</h2>
-          <p style={{ fontSize: 15, opacity: 0.9 }}>모두의회생 등록 전문가에게 무료 상담받으세요</p>
+          <p style={{ fontSize: 15, opacity: 0.9 }}>모두의회생에서 전문가를 찾아보세요</p>
           <button
             className="btn-primary"
             onClick={() => window.open('https://modoohs.com/experts', '_blank')}
             style={{ width: '100%', maxWidth: 300, margin: '20px auto 0' }}
           >
-            상담받기
+            전문가 찾기
           </button>
         </div>
       </div>
@@ -226,12 +230,59 @@ const SEVERITY_STYLE = {
 
 
 // =========================================================================
+// 법원 실무 안내 (가족 구성 기반)
+// =========================================================================
+function NoticesCard({ notices }) {
+  return (
+    <div className="card">
+      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>📌 법원 실무 안내</div>
+      {notices.map((n) => (
+        <div key={n.id} className="notice-item">
+          <div className="notice-item__title">{n.title}</div>
+          <div className="notice-item__body">
+            {(n.blocks || []).map((b, i) => {
+              if (b.type === 'p') {
+                return <p key={i} className="notice-p">{b.text}</p>;
+              }
+              if (b.type === 'ul') {
+                return (
+                  <ul key={i} className="notice-ul">
+                    {(b.items || []).map((it, j) => <li key={j}>{it}</li>)}
+                  </ul>
+                );
+              }
+              if (b.type === 'note') {
+                return <div key={i} className="notice-note">※ {b.text}</div>;
+              }
+              return null;
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+// =========================================================================
 // 예상 변제 계획 (3수치 + 자연어 문장 병합)
 // =========================================================================
 function PaymentPlanCard({ result }) {
   const p = result.paymentPlan;
   const creditDebt = result.creditDebt;
   const surplus = p.totalPayment > creditDebt; // 소득으로 충분히 상환 가능한 경우
+
+  // 구버전 저장 데이터 방어 — repaymentRate/exemptionRate 없으면 즉석 계산
+  const repaymentRate = Number.isFinite(p.repaymentRate)
+    ? p.repaymentRate
+    : creditDebt > 0
+      ? Math.min(1, p.totalPayment / creditDebt)
+      : 0;
+  const exemptionRate = Number.isFinite(p.exemptionRate)
+    ? p.exemptionRate
+    : creditDebt > 0
+      ? Math.max(0, 1 - p.totalPayment / creditDebt)
+      : 0;
 
   let narrative;
   if (surplus) {
@@ -253,8 +304,10 @@ function PaymentPlanCard({ result }) {
       <>
         매월 <Strong>{formatKoreanMoney(p.monthlyPayment)}</Strong>씩{' '}
         <Strong>{p.period}개월간</Strong> 변제하시면,
-        총 <Strong>{formatKoreanMoney(p.totalPayment)}</Strong>을 갚고 나머지{' '}
-        <Strong style={{ color: '#10b981' }}>{formatKoreanMoney(p.exemption)}</Strong>은 면책(탕감)됩니다.
+        총 <Strong>{formatKoreanMoney(p.totalPayment)}</Strong>을 갚고 (변제율{' '}
+        <Strong>{(repaymentRate * 100).toFixed(1)}%</Strong>), 나머지{' '}
+        <Strong style={{ color: '#10b981' }}>{formatKoreanMoney(p.exemption)}</Strong>은 면책(감면율{' '}
+        <Strong style={{ color: '#10b981' }}>{(exemptionRate * 100).toFixed(1)}%</Strong>)됩니다.
       </>
     );
   }
@@ -263,10 +316,14 @@ function PaymentPlanCard({ result }) {
     <div className="card">
       <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>예상 변제 계획</div>
 
-      <div className="metric-row">
-        <MetricCard label="월 변제금"     value={formatKoreanMoney(p.monthlyPayment)} color="var(--c-primary)" />
-        <MetricCard label="변제 기간"     value={`${p.period}개월`}                   color="var(--c-text-primary)" />
-        <MetricCard label="예상 면책액"   value={formatKoreanMoney(p.exemption)}     color="#10b981" />
+      <div className="metric-row metric-row--primary">
+        <MetricCard label="월 변제금" value={formatKoreanMoney(p.monthlyPayment)} color="var(--c-primary)" />
+        <MetricCard label="변제 기간" value={`${p.period}개월`}                    color="var(--c-text-primary)" />
+      </div>
+      <div className="metric-row metric-row--secondary">
+        <MetricCard label="변제율"   value={`${(repaymentRate * 100).toFixed(1)}%`} color="var(--c-primary)" compact />
+        <MetricCard label="감면율"   value={`${(exemptionRate * 100).toFixed(1)}%`} color="#10b981"          compact />
+        <MetricCard label="탕감액"   value={formatKoreanMoney(p.exemption)}          color="#10b981"          compact />
       </div>
 
       <div
@@ -294,9 +351,9 @@ function PaymentPlanCard({ result }) {
   );
 }
 
-function MetricCard({ label, value, color }) {
+function MetricCard({ label, value, color, compact }) {
   return (
-    <div className="metric-card">
+    <div className={`metric-card${compact ? ' metric-card--compact' : ''}`}>
       <div className="metric-card__label">{label}</div>
       <div className="metric-card__value" style={{ color }}>{value}</div>
     </div>
@@ -333,16 +390,14 @@ function MiniScenario({ label, result, highlight }) {
   const style = VERDICT_STYLE[result.verdict] || VERDICT_STYLE[VERDICT.CONSULT];
   return (
     <div className="alt-card" style={{ borderColor: highlight ? style.color : 'var(--c-border)' }}>
-      <div className="alt-card__label">
-        {label}{highlight && <span style={{ color: 'var(--c-text-muted)', fontWeight: 500 }}> · 기본 표시</span>}
-      </div>
+      <div className="alt-card__label">{label}</div>
       <div className="alt-card__verdict" style={{ color: style.color }}>{style.label}</div>
       <div className="alt-card__row"><span>재산 합계</span><strong>{formatKoreanMoney(result.liquidation.total)}</strong></div>
       {result.paymentPlan && (
         <>
           <div className="alt-card__row"><span>월 변제금</span><strong>{formatKoreanMoney(result.paymentPlan.monthlyPayment)}</strong></div>
           <div className="alt-card__row"><span>기간</span><strong>{result.paymentPlan.period}개월</strong></div>
-          <div className="alt-card__row"><span>예상 면책</span><strong style={{ color: '#10b981' }}>{formatKoreanMoney(result.paymentPlan.exemption)}</strong></div>
+          <div className="alt-card__row"><span>탕감액</span><strong style={{ color: '#10b981' }}>{formatKoreanMoney(result.paymentPlan.exemption)}</strong></div>
         </>
       )}
     </div>
@@ -353,7 +408,7 @@ function MiniScenario({ label, result, highlight }) {
 // =========================================================================
 // 내 재산 요약 — 단순 (기술용어 없음)
 // =========================================================================
-function MyAssetsCard({ result }) {
+function MyAssetsCard({ result, answers }) {
   const L = result.liquidation;
   const rows = [
     { label: '자가 부동산', v: L.realEstate },
@@ -364,6 +419,9 @@ function MyAssetsCard({ result }) {
     { label: '코인', v: L.crypto },
     { label: '퇴직금', v: L.retirement },
     { label: '전세 보증금', v: L.jeonse },
+    { label: '월세 보증금', v: L.housingDeposit || 0 },
+    { label: '사업장 임차보증금', v: L.businessRentDeposit || 0 },
+    { label: '영업비품 (환가 예상)', v: L.businessEquipment || 0 },
   ].filter((r) => r.v > 0);
 
   return (
@@ -383,6 +441,7 @@ function MyAssetsCard({ result }) {
             <span>합계</span>
             <strong>{formatKoreanMoney(L.total)}</strong>
           </div>
+          <AssetsDetailAccordion answers={answers} result={result} />
         </>
       )}
       <p style={{ fontSize: 12, color: 'var(--c-text-tertiary)', marginTop: 12, lineHeight: 1.6, wordBreak: 'keep-all' }}>
@@ -394,9 +453,213 @@ function MyAssetsCard({ result }) {
 
 
 // =========================================================================
+// 재산 상세 내역 아코디언 — 각 항목별 계산식 전개
+// =========================================================================
+function AssetsDetailAccordion({ answers: a, result }) {
+  const L = result.liquidation;
+  const assets = a.otherAssets || [];
+  const isRehab = result.court?.recommended === 'rehab';
+
+  // 면제재산 (거주지 기준)
+  const exemptionWon = resolveJeonseExemption(a.residenceSido, a.residenceSigungu);
+  const exemptionText = formatKoreanMoney(exemptionWon);
+  // "양산시 변제금" / "서울특별시 변제금" 형태로 거주지 이름 prefix
+  const exemptionLabel =
+    a.residenceSido === '서울특별시'
+      ? `${a.residenceSido} 변제금`
+      : (a.residenceSigungu ? `${a.residenceSigungu} 변제금` : '최우선 변제금');
+
+  const blocks = [];
+
+  // 1. 자가 부동산
+  if (a.housingType === '자가' && (Number(a.realEstateValue) || 0) > 0) {
+    const valW = manwonToWon(Number(a.realEstateValue) || 0);
+    const mortW = manwonToWon(Number(a.realEstateMortgage) || 0);
+    const multW = valW * 0.7;
+    const afterMortW = Math.max(0, multW - mortW);
+    const lines = [
+      `시세 ${formatKoreanMoney(valW)} × 0.7 (법원 환산율) = ${formatKoreanMoney(multW)}`,
+      `환산가치 ${formatKoreanMoney(multW)} − 담보대출 ${formatKoreanMoney(mortW)} = ${formatKoreanMoney(afterMortW)}`,
+    ];
+    if (a.realEstateOwnership === 'single') {
+      lines.push(`본인 단독 명의 → 전액 반영 = ${formatKoreanMoney(L.realEstate)}`);
+    } else if (a.realEstateOwnership === 'joint') {
+      lines.push(`공동명의 → 1/2 반영 = ${formatKoreanMoney(L.realEstate)}`);
+    } else if (a.realEstateOwnership === 'spouse') {
+      lines.push(
+        `배우자 단독 명의 → ${isRehab ? '회생법원 관할: 0원 반영' : '지방법원 관할: 1/2 반영'} = ${formatKoreanMoney(L.realEstate)}`,
+      );
+    }
+    blocks.push({ title: '자가 부동산', value: L.realEstate, lines });
+  }
+
+  // 2. 차량
+  if (assets.includes('vehicle') && (Number(a.vehicleValue) || 0) > 0) {
+    const valW = manwonToWon(Number(a.vehicleValue) || 0);
+    const loanW = manwonToWon(Number(a.vehicleLoan) || 0);
+    const raw = valW - loanW;
+    const lines = [
+      `차량 시세 ${formatKoreanMoney(valW)} − 차량 담보대출 ${formatKoreanMoney(loanW)} = ${formatKoreanMoney(L.vehicle)}${raw < 0 ? ' (음수는 0 처리)' : ''}`,
+    ];
+    blocks.push({ title: '차량', value: L.vehicle, lines });
+  }
+
+  // 3. 예금·보험
+  const hasDeposit = assets.includes('deposit') && (Number(a.depositValue) || 0) > 0;
+  const hasInsurance = assets.includes('insurance');
+  if (hasDeposit || hasInsurance) {
+    const depW = hasDeposit ? manwonToWon(Number(a.depositValue) || 0) : 0;
+    const insKnown = a.insuranceKnown === 'yes';
+    const insGrossW = hasInsurance && insKnown ? manwonToWon(Number(a.insuranceValue) || 0) : 0;
+    const insLoanW = hasInsurance && insKnown ? manwonToWon(Number(a.insurancePolicyLoan) || 0) : 0;
+    const insNetW = Math.max(0, insGrossW - insLoanW);
+    const sumW = depW + insNetW;
+    const lines = [];
+    if (depW > 0) lines.push(`예금·적금 합계: ${formatKoreanMoney(depW)}`);
+    if (hasInsurance && insKnown) {
+      lines.push(`보험 해약환급금 ${formatKoreanMoney(insGrossW)} − 약관대출 ${formatKoreanMoney(insLoanW)} = ${formatKoreanMoney(insNetW)}`);
+    } else if (hasInsurance && !insKnown) {
+      lines.push('보험 해약환급금: 모름 → 0원 처리');
+    }
+    lines.push(`합산 ${formatKoreanMoney(sumW)} − 압류금지 공제 250만원 = ${formatKoreanMoney(L.depositInsurance)}${sumW - 2_500_000 < 0 ? ' (음수는 0 처리)' : ''}`);
+    blocks.push({ title: '예금·보험', value: L.depositInsurance, lines });
+  }
+
+  // 4. 청약
+  if (assets.includes('account') && (Number(a.accountValue) || 0) > 0) {
+    const valW = manwonToWon(Number(a.accountValue) || 0);
+    const loanW = manwonToWon(Number(a.accountCollateralLoan) || 0);
+    const raw = valW - loanW;
+    blocks.push({
+      title: '청약',
+      value: L.account,
+      lines: [
+        `청약 환급금 ${formatKoreanMoney(valW)} − 청약 담보대출 ${formatKoreanMoney(loanW)} = ${formatKoreanMoney(L.account)}${raw < 0 ? ' (음수는 0 처리)' : ''}`,
+      ],
+    });
+  }
+
+  // 5. 주식
+  if (assets.includes('stocks') && (Number(a.stocksValue) || 0) > 0) {
+    blocks.push({
+      title: '주식',
+      value: L.stocks,
+      lines: [`주식 평가액 (현재 시세 기준) 전액 반영 = ${formatKoreanMoney(L.stocks)}`],
+    });
+  }
+
+  // 6. 코인
+  if (assets.includes('crypto') && (Number(a.cryptoValue) || 0) > 0) {
+    blocks.push({
+      title: '코인',
+      value: L.crypto,
+      lines: [`코인 평가액 (현재 시세 기준) 전액 반영 = ${formatKoreanMoney(L.crypto)}`],
+    });
+  }
+
+  // 7. 퇴직금
+  if (assets.includes('retirement') && a.recoveryType !== '사업자회생') {
+    const type = a.retirementType;
+    if (type === 'severance') {
+      const valW = manwonToWon(Number(a.retirementAmount) || 0);
+      blocks.push({
+        title: '퇴직금',
+        value: L.retirement,
+        lines: [`회사 지급 퇴직금 ${formatKoreanMoney(valW)} × 1/2 = ${formatKoreanMoney(L.retirement)}`],
+      });
+    } else if (type) {
+      blocks.push({
+        title: '퇴직금',
+        value: L.retirement,
+        lines: [`${mapRetirementType(type)}: 재산가치 반영 없음 (0원)`],
+      });
+    }
+  }
+
+  // 8. 전세 보증금
+  if (a.housingType === '전세' && (Number(a.jeonseAmount) || 0) > 0) {
+    const amtW = manwonToWon(Number(a.jeonseAmount) || 0);
+    const hasLoan = a.jeonseHasLoan === 'yes';
+    const loanW = hasLoan ? manwonToWon(Number(a.jeonseLoanAmount) || 0) : 0;
+    const lines = [];
+    const lienForPrimary = a.jeonseLien === 'unknown' ? 'no' : a.jeonseLien;
+    if (a.jeonseLien === 'unknown') {
+      lines.push('※ 질권설정 "모름" — 주표시는 "질권설정 없음" 시나리오 가정');
+    }
+    if (hasLoan && lienForPrimary === 'yes') {
+      const afterLoanW = Math.max(0, amtW - loanW);
+      lines.push(`전세금 ${formatKoreanMoney(amtW)} − 전세대출 ${formatKoreanMoney(loanW)} = ${formatKoreanMoney(afterLoanW)}`);
+      lines.push(`${formatKoreanMoney(afterLoanW)} − ${exemptionLabel} ${exemptionText} = ${formatKoreanMoney(L.jeonse)}${afterLoanW - exemptionWon < 0 ? ' (음수는 0 처리)' : ''}`);
+    } else {
+      lines.push(`전세금 ${formatKoreanMoney(amtW)} − ${exemptionLabel} ${exemptionText} = ${formatKoreanMoney(L.jeonse)}${amtW - exemptionWon < 0 ? ' (음수는 0 처리)' : ''}`);
+    }
+    blocks.push({ title: '전세 보증금', value: L.jeonse, lines });
+  }
+
+  // 9. 월세 보증금
+  if (a.housingType === '월세' && (Number(a.housingDeposit) || 0) > 0) {
+    const depW = manwonToWon(Number(a.housingDeposit) || 0);
+    blocks.push({
+      title: '월세 보증금',
+      value: L.housingDeposit || 0,
+      lines: [
+        `월세 보증금 ${formatKoreanMoney(depW)} − ${exemptionLabel} ${exemptionText} = ${formatKoreanMoney(L.housingDeposit || 0)}${depW - exemptionWon < 0 ? ' (음수는 0 처리)' : ''}`,
+      ],
+    });
+  }
+
+  // 10. 사업장 임차보증금
+  if (a.recoveryType === '사업자회생' && (L.businessRentDeposit || 0) > 0) {
+    const depW = manwonToWon(Number(a.businessRentDeposit) || 0);
+    blocks.push({
+      title: '사업장 임차보증금',
+      value: L.businessRentDeposit,
+      lines: [`사업장 임차보증금 ${formatKoreanMoney(depW)} 전액 반영 (최우선 변제금 적용 없음)`],
+    });
+  }
+
+  // 11. 영업비품
+  if (a.recoveryType === '사업자회생' && (L.businessEquipment || 0) > 0) {
+    const valW = manwonToWon(Number(a.businessEquipmentValue) || 0);
+    blocks.push({
+      title: '영업비품',
+      value: L.businessEquipment,
+      lines: [`영업비품 환가 예상액 ${formatKoreanMoney(valW)} 전액 반영`],
+    });
+  }
+
+  if (blocks.length === 0) return null;
+
+  return (
+    <details className="detail-accordion">
+      <summary className="detail-accordion__summary">
+        <span>상세 내역 보기</span>
+        <span className="detail-accordion__chevron">▾</span>
+      </summary>
+      <div className="detail-accordion__body">
+        {blocks.map((b, i) => (
+          <div key={i} className="detail-block">
+            <div className="detail-block__title">
+              <span>{b.title}</span>
+              <span className="detail-block__value">{formatKoreanMoney(b.value)}</span>
+            </div>
+            {b.lines.map((line, j) => (
+              <div key={j} className="detail-block__line">{line}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+
+// =========================================================================
 // 내 채무
 // =========================================================================
-function MyDebtCard({ creditDebt }) {
+function MyDebtCard({ result, answers }) {
+  const a = answers;
+  const creditDebt = result.creditDebt;
   return (
     <div className="card">
       <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>내 채무 내역</div>
@@ -406,7 +669,49 @@ function MyDebtCard({ creditDebt }) {
           {formatKoreanMoney(creditDebt)}
         </strong>
       </div>
+      <DebtDetailAccordion answers={a} result={result} />
     </div>
+  );
+}
+
+
+// =========================================================================
+// 채무 상세 내역 아코디언
+// =========================================================================
+function DebtDetailAccordion({ answers: a, result }) {
+  const inputDebtW = manwonToWon(Number(a.totalCreditDebt) || 0);
+  const added = result.creditDebt - inputDebtW;
+
+  const lines = [`입력 신용채무 (담보대출 제외): ${formatKoreanMoney(inputDebtW)}`];
+
+  if (added > 0) {
+    const note = a.jeonseLien === 'unknown'
+      ? '질권설정 "모름" — 주표시는 "질권설정 없음" 시나리오로 가정되어 신용채권에 편입'
+      : '전세대출 질권설정 없음 → 신용채권에 편입';
+    lines.push(`+ 전세대출 원금: ${formatKoreanMoney(added)}`);
+    lines.push(`  ※ ${note}`);
+  }
+
+  return (
+    <details className="detail-accordion">
+      <summary className="detail-accordion__summary">
+        <span>상세 내역 보기</span>
+        <span className="detail-accordion__chevron">▾</span>
+      </summary>
+      <div className="detail-accordion__body">
+        <div className="detail-block">
+          <div className="detail-block__title">
+            <span>회생 대상 신용채무 합계</span>
+            <span className="detail-block__value" style={{ color: 'var(--c-danger)' }}>
+              {formatKoreanMoney(result.creditDebt)}
+            </span>
+          </div>
+          {lines.map((line, i) => (
+            <div key={i} className="detail-block__line">{line}</div>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -445,6 +750,26 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ['결혼 상태', A('maritalStatus')],
         ...(a.maritalStatus === '기혼' ? [['배우자 소득', a.spouseIncome === 'yes' ? '있음' : a.spouseIncome === 'no' ? '없음' : '-']] : []),
         ['미성년 자녀', `${a.minorChildren || 0}명`],
+        // 이혼 + 자녀 → 양육비 지급 여부·금액
+        ...(a.maritalStatus === '이혼' && (Number(a.minorChildren) || 0) > 0
+          ? [
+              ['양육비 지급 여부', mapChildSupportStatus(a.childSupportStatus)],
+              ...(a.childSupportStatus === 'paying' || a.childSupportStatus === 'not_paying'
+                ? [['양육비 월액', money('childSupportAmount')]]
+                : []),
+            ]
+          : []),
+        // 기혼 + 자녀 + 맞벌이 → 배우자 월 소득 (참고자료)
+        ...(a.maritalStatus === '기혼' && (Number(a.minorChildren) || 0) > 0 && a.spouseIncome === 'yes'
+          ? [['배우자 월 소득', mapSpouseLevel(a.spouseIncomeLevel, money('spouseIncomeCustom'), SPOUSE_INCOME_LABELS)]]
+          : []),
+        // 기혼 → 배우자 재산·채무 (참고자료)
+        ...(a.maritalStatus === '기혼'
+          ? [
+              ['배우자 재산', mapSpouseLevel(a.spouseAssetLevel, money('spouseAssetCustom'), SPOUSE_ASSET_LABELS)],
+              ['배우자 채무', mapSpouseLevel(a.spouseDebtLevel, money('spouseDebtCustom'), SPOUSE_DEBT_LABELS)],
+            ]
+          : []),
         ['부양 부모', `${a.dependentParents || 0}명`],
       ],
     },
@@ -472,7 +797,7 @@ function InputSummaryCards({ answers, result, onEdit }) {
       editId: 'housingGroup',
       rows: [
         ['주거 형태', A('housingType')],
-        ...(a.housingType === '월세' ? [['월세', money('monthlyRent')]] : []),
+        ...(a.housingType === '월세' ? [['월세', money('monthlyRent')], ['월세 보증금', money('housingDeposit')]] : []),
       ],
     },
     ...(a.housingType === '자가' ? [{
@@ -489,8 +814,26 @@ function InputSummaryCards({ answers, result, onEdit }) {
       editId: 'jeonseGroup',
       rows: [
         ['전세 보증금', money('jeonseAmount')],
-        ['질권설정', a.jeonseLien === 'yes' ? '있음' : a.jeonseLien === 'no' ? '없음' : a.jeonseLien === 'unknown' ? '모름' : '-'],
-        ...(a.jeonseLien === 'yes' ? [['질권설정 금액', money('jeonseLienAmount')]] : []),
+        ['전세대출 유무', a.jeonseHasLoan === 'yes' ? '있음' : a.jeonseHasLoan === 'no' ? '없음' : '-'],
+        ...(a.jeonseHasLoan === 'yes'
+          ? [
+              ['전세대출 금액', money('jeonseLoanAmount')],
+              ['질권설정', a.jeonseLien === 'yes' ? '있음' : a.jeonseLien === 'no' ? '없음' : a.jeonseLien === 'unknown' ? '모름' : '-'],
+            ]
+          : []),
+      ],
+    }] : []),
+    // 사업자회생 — 사업장 정보
+    ...(a.recoveryType === '사업자회생' ? [{
+      title: '사업장',
+      editId: 'businessGroup',
+      rows: [
+        ['가게 형태', mapBusinessOfficeType(a.businessOfficeType)],
+        ...(a.businessOfficeType === 'jeonse' || a.businessOfficeType === 'rental'
+          ? [['가게 임차보증금', money('businessRentDeposit')]]
+          : []),
+        ...(a.businessOfficeType === 'rental' ? [['가게 월 차임', money('businessMonthlyRent')]] : []),
+        ['영업비품 환가 예상액', money('businessEquipmentValue')],
       ],
     }] : []),
     ...(Array.isArray(a.otherAssets) && a.otherAssets.length > 0 && !a.otherAssets.includes('none')
@@ -522,6 +865,31 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ['총 신용채무', money('totalCreditDebt')],
       ],
     },
+    {
+      title: '채무 발생 주요 원인',
+      editId: 'debtCauses',
+      rows: [
+        ['발생 원인', formatCodeList(a.debtCauses, DEBT_CAUSE_LABELS)],
+      ],
+    },
+    {
+      title: '24개월 단축 자격',
+      editId: 'specialQualifications',
+      rows: [
+        ['자격 조건', formatCodeList(a.specialQualifications, SPECIAL_QUAL_LABELS)],
+      ],
+    },
+    // 배제 조건 — 특별자격 중 하나라도 해당되어 질문이 노출된 경우만 표시
+    ...(Array.isArray(a.specialQualifications) &&
+      ['under30', 'over65', 'disabled', 'jeonse_victim'].some((q) => a.specialQualifications.includes(q))
+      ? [{
+          title: '24개월 단축 배제 여부',
+          editId: 'qualificationExclusions',
+          rows: [
+            ['배제 조건', formatCodeList(a.qualificationExclusions, QUAL_EXCLUSION_LABELS)],
+          ],
+        }]
+      : []),
     {
       title: '연체·과거 이력',
       editId: 'statusHistoryGroup',
@@ -571,6 +939,69 @@ function mapRetirementType(code) {
     publicPension: '공무원·사학·군인연금',
   };
   return m[code] || '-';
+}
+
+const DEBT_CAUSE_LABELS = {
+  living: '생활비',
+  business: '사업자금',
+  housing: '주거비용 (전세·월세)',
+  medical: '병원비·의료비',
+  guarantee: '보증채무',
+  stocks: '주식 투자',
+  crypto: '코인 (가상자산)',
+  gambling: '도박',
+  fraud: '사기 피해',
+  other: '기타',
+};
+
+const SPECIAL_QUAL_LABELS = {
+  under30: '만 30세 미만',
+  over65: '만 65세 이상',
+  disabled: '장애인',
+  jeonse_victim: '전세사기 피해자',
+  none: '해당 없음',
+};
+
+const QUAL_EXCLUSION_LABELS = {
+  debt_over_150m: '전체 채권금액 1.5억원 초과',
+  creditors_over_2: '개인 채권자 2명 초과',
+  speculation_over_20pct: '도박·주식·코인 부채 20% 초과',
+  none: '해당 없음',
+};
+
+function formatCodeList(values, labels) {
+  if (!Array.isArray(values) || values.length === 0) return '-';
+  // 각 항목을 별도 줄로 표시 — summary-row__value CSS의 pre-line과 조합되어 줄바꿈 렌더
+  return values.map((v) => labels[v] || v).join('\n');
+}
+
+function mapBusinessOfficeType(code) {
+  const m = {
+    owned: '자가',
+    jeonse: '전세',
+    rental: '월세',
+    none: '해당없음 (재택·무점포)',
+  };
+  return m[code] || '-';
+}
+
+function mapChildSupportStatus(code) {
+  const m = {
+    paying: '양육비를 지급 중',
+    not_paying: '양육비를 지급하지 못함',
+    none_agreed: '양육비 지급이 없는 이혼',
+  };
+  return m[code] || '-';
+}
+
+const SPOUSE_INCOME_LABELS = { lt100: '100만원 미만', lt200: '200만원 미만', lt300: '300만원 미만' };
+const SPOUSE_ASSET_LABELS  = { none: '없음', lt500: '500만원 미만', lt1000: '1,000만원 미만', lt2000: '2,000만원 미만' };
+const SPOUSE_DEBT_LABELS   = { none: '없음', lt1000: '1,000만원 미만', lt3000: '3,000만원 미만', lt5000: '5,000만원 미만' };
+
+function mapSpouseLevel(code, customText, labels) {
+  if (!code) return '-';
+  if (code === 'custom') return customText && customText !== '-' ? `${customText} (직접 입력)` : '직접 입력';
+  return labels[code] || '-';
 }
 
 
@@ -631,32 +1062,63 @@ function DisclaimerCard() {
 const LOCAL_CSS = `
 .metric-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+  min-width: 0;
 }
+.metric-row + .metric-row { margin-top: 10px; }
+
+/* 주요 지표 (월 변제금·변제 기간) — 2열, 크게 */
+.metric-row--primary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* 보조 지표 (변제율·감면율·탕감액) — 3열, 작게 */
+.metric-row--secondary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .metric-card {
   background: var(--c-bg);
   border-radius: 12px;
   padding: 14px 10px;
   text-align: center;
   min-width: 0;
+  overflow: hidden;
 }
 .metric-card__label {
   font-size: 12px;
   color: var(--c-text-muted);
   margin-bottom: 6px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .metric-card__value {
-  font-size: clamp(14px, 3.8vw, 20px);
+  font-size: clamp(15px, 4.4vw, 22px);
   font-weight: 800;
   line-height: 1.3;
   word-break: keep-all;
+  overflow-wrap: normal;
+  letter-spacing: -0.4px;
+  min-width: 0;
+}
+/* compact — 보조 지표용 축소 폰트 */
+.metric-card--compact .metric-card__value {
+  font-size: clamp(13px, 3.6vw, 17px);
   letter-spacing: -0.3px;
 }
+.metric-card--compact {
+  padding: 12px 8px;
+}
 
-@media (max-width: 420px) {
-  .metric-row { grid-template-columns: 1fr; }
+/* 모바일 — 주요 지표는 그대로 2열 유지, 보조 지표는 2+1 */
+@media (max-width: 480px) {
+  .metric-row--secondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .metric-row--secondary > .metric-card:nth-child(3) {
+    grid-column: span 2;
+  }
 }
 
 .warning-item {
@@ -747,6 +1209,7 @@ const LOCAL_CSS = `
 .summary-row__value {
   font-size: 13px; font-weight: 600; color: var(--c-text-primary);
   word-break: keep-all; text-align: right;
+  white-space: pre-line;
 }
 
 .edit-pill {
@@ -795,5 +1258,116 @@ const LOCAL_CSS = `
 }
 .alt-card__row strong {
   font-size: 13px; color: var(--c-text-primary); font-weight: 700;
+}
+
+.notice-item {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--c-point-bg);
+  border-left: 4px solid var(--c-primary);
+  margin-bottom: 12px;
+}
+.notice-item:last-child { margin-bottom: 0; }
+.notice-item__title {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--c-primary);
+  margin-bottom: 8px;
+  word-break: keep-all;
+}
+.notice-item__body { color: var(--c-text-sub); }
+.notice-p {
+  font-size: 13px;
+  line-height: 1.75;
+  margin: 0 0 8px 0;
+  word-break: keep-all;
+}
+.notice-p:last-child { margin-bottom: 0; }
+.notice-ul {
+  font-size: 13px;
+  line-height: 1.75;
+  margin: 4px 0 10px 0;
+  padding-left: 20px;
+  color: var(--c-text-sub);
+}
+.notice-ul li {
+  margin-bottom: 2px;
+  word-break: keep-all;
+}
+.notice-note {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: white;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--c-text-muted);
+  line-height: 1.6;
+  word-break: keep-all;
+}
+
+/* 상세 내역 아코디언 (재산·채무) */
+.detail-accordion {
+  margin-top: 10px;
+  padding-top: 4px;
+}
+.detail-accordion__summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-primary);
+  padding: 8px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  border-radius: 6px;
+}
+.detail-accordion__summary:hover {
+  background: var(--c-point-bg);
+}
+.detail-accordion__summary::-webkit-details-marker { display: none; }
+.detail-accordion__summary::marker { display: none; content: ''; }
+.detail-accordion__chevron {
+  transition: transform 0.25s ease;
+  display: inline-block;
+  color: var(--c-primary);
+  font-size: 11px;
+}
+details[open] > .detail-accordion__summary > .detail-accordion__chevron {
+  transform: rotate(180deg);
+}
+.detail-accordion__body {
+  padding: 8px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.detail-block {
+  padding: 12px 14px;
+  background: var(--c-bg);
+  border-radius: 10px;
+}
+.detail-block__title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.detail-block__value {
+  color: var(--c-primary);
+  font-weight: 800;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.detail-block__line {
+  font-size: 12px;
+  color: var(--c-text-sub);
+  line-height: 1.75;
+  padding: 2px 0;
+  word-break: keep-all;
 }
 `;

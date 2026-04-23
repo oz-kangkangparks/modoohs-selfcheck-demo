@@ -112,11 +112,104 @@ const questions = [
         min: 0,
         max: 10,
       },
+      // ---------- 이혼 + 미성년 자녀 → 양육비 ----------
+      {
+        field: 'childSupportStatus',
+        subType: 'select',
+        label: '자녀 양육비 지급 여부',
+        options: [
+          { value: 'paying', label: '양육비를 지급 중' },
+          { value: 'not_paying', label: '양육비를 지급하지 못함' },
+          { value: 'none_agreed', label: '양육비 지급이 없는 이혼' },
+        ],
+        columns: 1,
+        showIf: (a) => a.maritalStatus === '이혼' && (Number(a.minorChildren) || 0) > 0,
+      },
+      {
+        field: 'childSupportAmount',
+        subType: 'money',
+        label: '양육비 금액 (월)',
+        hint: '이혼확인서·양육비 부담조서상 금액 또는 실제 지급(예정) 월액을 입력하세요',
+        showIf: (a) =>
+          a.maritalStatus === '이혼' &&
+          (Number(a.minorChildren) || 0) > 0 &&
+          (a.childSupportStatus === 'paying' || a.childSupportStatus === 'not_paying'),
+      },
+      // ---------- 기혼 + 미성년 자녀 + 맞벌이 → 배우자 간이조사 ----------
+      {
+        field: 'spouseIncomeLevel',
+        subType: 'select',
+        label: '배우자의 월 소득',
+        hint: '근로소득·연금·아동수당 등 소득합계 기준',
+        options: [
+          { value: 'lt100', label: '100만원 미만' },
+          { value: 'lt200', label: '200만원 미만' },
+          { value: 'lt300', label: '300만원 미만' },
+          { value: 'custom', label: '그 이상 (직접 입력)' },
+        ],
+        columns: 2,
+        showIf: (a) =>
+          a.maritalStatus === '기혼' &&
+          (Number(a.minorChildren) || 0) > 0 &&
+          a.spouseIncome === 'yes',
+      },
+      {
+        field: 'spouseIncomeCustom',
+        subType: 'money',
+        label: '배우자 월 소득 (직접 입력)',
+        showIf: (a) =>
+          a.maritalStatus === '기혼' &&
+          (Number(a.minorChildren) || 0) > 0 &&
+          a.spouseIncome === 'yes' &&
+          a.spouseIncomeLevel === 'custom',
+      },
+      {
+        field: 'spouseAssetLevel',
+        subType: 'select',
+        label: '배우자의 재산',
+        hint: '부동산·차량 가치에서 담보대출을 제외한 금액 기준',
+        options: [
+          { value: 'none', label: '없음' },
+          { value: 'lt500', label: '500만원 미만' },
+          { value: 'lt1000', label: '1,000만원 미만' },
+          { value: 'lt2000', label: '2,000만원 미만' },
+          { value: 'custom', label: '그 이상 (직접 입력)' },
+        ],
+        columns: 2,
+        showIf: (a) => a.maritalStatus === '기혼',
+      },
+      {
+        field: 'spouseAssetCustom',
+        subType: 'money',
+        label: '배우자 재산 (직접 입력)',
+        showIf: (a) => a.maritalStatus === '기혼' && a.spouseAssetLevel === 'custom',
+      },
+      {
+        field: 'spouseDebtLevel',
+        subType: 'select',
+        label: '배우자의 채무',
+        hint: '신용카드 결제대금·각종 대출금 기준 (부동산·차량 담보대출은 환가 후 잔존 채무만)',
+        options: [
+          { value: 'none', label: '없음' },
+          { value: 'lt1000', label: '1,000만원 미만' },
+          { value: 'lt3000', label: '3,000만원 미만' },
+          { value: 'lt5000', label: '5,000만원 미만' },
+          { value: 'custom', label: '그 이상 (직접 입력)' },
+        ],
+        columns: 2,
+        showIf: (a) => a.maritalStatus === '기혼',
+      },
+      {
+        field: 'spouseDebtCustom',
+        subType: 'money',
+        label: '배우자 채무 (직접 입력)',
+        showIf: (a) => a.maritalStatus === '기혼' && a.spouseDebtLevel === 'custom',
+      },
       {
         field: 'dependentParents',
         subType: 'stepper',
-        label: '부양 중인 만 65세 이상 부모',
-        hint: '재산·소득이 없어 본인이 생활비를 책임지는 부모님만 체크 (0~2명)',
+        label: '부양 중인 부모',
+        hint: '연령보다 "실제 부양이 필요한 상태인지"가 기준입니다. 인정 요건·증빙 자료는 도움말을 참고하세요. (0~2명)',
         min: 0,
         max: 2,
       },
@@ -126,7 +219,21 @@ const questions = [
       easy: '내가 생활비를 책임지고 있는 가족이 부양가족입니다. 맞벌이라면 자녀 부양은 부부가 나눠서 책임지는 것으로 봅니다.',
       cases: [
         { q: '맞벌이인데 자녀가 2명이에요', a: '배우자 소득 "있음"을 선택하시고 자녀 2명으로 체크하세요. 부부가 자녀를 나눠 부양하는 것으로 자동 반영됩니다.' },
-        { q: '미혼이지만 부모님 생활비를 책임지고 있어요', a: '부모님이 만 65세 이상이고 재산·소득이 없다면 "부양 부모" 항목에 인원수를 입력하세요.' },
+        {
+          q: '부모님을 부양하고 있어요 — 어떻게 인정되나요?',
+          a:
+            '법원은 만 65세 이상인지 여부만을 기계적으로 판단하지 않습니다. 핵심은 "현재 실제로 부양의 도움이 필요한 상태인지"입니다.\n\n' +
+            '만 65세 미만이라 하더라도 건강이 좋지 않거나 가족의 간병이 필요해 경제활동이 어려운 상황이라면 충분히 부양가족으로 인정될 수 있습니다. ' +
+            '반대로 만 65세 이상이라 하더라도, 재산과 소득이 충분하고 다른 형제자매의 부양 여력이 채무자보다 더 크다면, 비록 함께 거주하고 있더라도 부양가족으로 인정되기 어려울 수 있습니다.\n\n' +
+            '따라서 실무상으로는 부양 필요성을 뒷받침할 수 있는 객관적인 자료가 매우 중요합니다. 예를 들면 아래와 같은 자료가 필요할 수 있습니다.\n' +
+            '• 부모의 지방세 세목별 과세증명서\n' +
+            '• 부모의 건강보험 자격득실확인서\n' +
+            '• 부모의 병원 진단서 또는 소견서\n' +
+            '• 부모의 병원비 지출내역서\n' +
+            '• 채무자의 양육비 또는 생활비 지급 관련 금융자료\n' +
+            '• 부모의 기초연금 수급 관련 자료 등\n\n' +
+            '즉, 단순히 연령만으로 판단할 것이 아니라 소득·재산·건강상태·실제 부양 여부를 종합적으로 검토하여 결정됩니다.',
+        },
         { q: '이혼 후 자녀를 혼자 키우고 있어요', a: '이혼을 선택하고 미성년 자녀 수를 입력하시면 단독 양육으로 반영됩니다.' },
       ],
       tip: '부양가족이 많을수록 법에서 인정하는 최소 생활비가 높아져 월 변제금이 줄어들어요.',
@@ -210,7 +317,14 @@ const questions = [
         field: 'monthlyRent',
         subType: 'money',
         label: '월세 금액',
-        hint: '관리비 제외 순수 월세',
+        hint: '관리비 제외 순수 월세 — 추가생계비에 반영됩니다',
+        showIf: (a) => a.housingType === '월세',
+      },
+      {
+        field: 'housingDeposit',
+        subType: 'money',
+        label: '월세 보증금',
+        hint: '지역별 최우선 변제금을 공제한 금액이 재산으로 반영됩니다',
         showIf: (a) => a.housingType === '월세',
       },
     ],
@@ -220,7 +334,7 @@ const questions = [
       cases: [
         { q: '자가', a: '부동산 시세·대출·명의를 물어봅니다.' },
         { q: '전세', a: '전세 보증금과 대출 관련 사항을 물어봅니다.' },
-        { q: '월세', a: '월세 금액을 물어봐 생활비에 반영합니다.' },
+        { q: '월세', a: '월세 금액과 월세 보증금을 물어봅니다. 월세는 추가생계비에, 보증금은 지역별 최우선 변제금을 공제한 금액이 재산에 반영됩니다.' },
       ],
     },
   },
@@ -276,7 +390,7 @@ const questions = [
     id: 'jeonseGroup',
     type: 'composite',
     title: '전세 정보를 입력해주세요',
-    subtitle: '전세 보증금과 대출 정보를 입력해주세요',
+    subtitle: '전세 보증금과 전세대출 정보를 입력해주세요',
     showIf: (a) => a.housingType === '전세',
     fields: [
       {
@@ -285,30 +399,105 @@ const questions = [
         label: '전세 보증금',
       },
       {
-        field: 'jeonseLien',
-        subType: 'triState',
-        label: '전세자금 대출 질권설정 여부',
-        hint: '잘 모르시면 "모름"을 선택하세요. 두 경우의 결과를 모두 보여드립니다.',
+        field: 'jeonseHasLoan',
+        subType: 'select',
+        label: '전세대출이 있으신가요?',
         options: [
-          { value: 'yes', label: '있음 (HUG 등)' },
-          { value: 'no', label: '없음 (카카오·HF 등)' },
-          { value: 'unknown', label: '모름' },
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
         ],
+        columns: 2,
       },
       {
-        field: 'jeonseLienAmount',
+        field: 'jeonseLoanAmount',
         subType: 'money',
-        label: '질권설정 금액',
-        hint: '보증공사에 설정된 전세대출 금액 (보통 전세대출 원금과 같아요)',
-        showIf: (a) => a.jeonseLien === 'yes',
+        label: '전세대출 금액',
+        hint: '전세자금 대출 원금 (남은 상환액이 아니라 계약 당시 받은 원금 기준)',
+        showIf: (a) => a.jeonseHasLoan === 'yes',
+      },
+      {
+        field: 'jeonseLien',
+        subType: 'triState',
+        label: '전세대출 질권설정 여부',
+        hint: '통상 주택도시보증공사(HUG)는 질권설정이 되어 있으며, 카카오 또는 한국주택금융공사(HF)는 질권설정이 되어 있지 않습니다. 잘 모르시면 "모름"을 선택하세요.',
+        options: [
+          { value: 'yes', label: '있음 (질권설정)' },
+          { value: 'no', label: '없음' },
+          { value: 'unknown', label: '모름' },
+        ],
+        showIf: (a) => a.jeonseHasLoan === 'yes',
       },
     ],
     helpCard: {
-      title: '질권설정이 뭐예요?',
-      easy: 'HUG·SGI 같은 보증공사가 전세대출을 해주면서 "만기에 집주인이 돌려주는 보증금은 우리가 직접 받아간다"고 설정해둔 것이에요. 카카오·주택금융공사(HF) 같은 곳은 보통 이 설정이 없습니다.',
-      tip: '잘 모르시면 전세대출을 받으신 금융사 고객센터에 "질권설정 여부"를 문의해보세요. 모를 경우 "모름"을 선택하시면 두 경우 결과를 모두 보여드립니다.',
+      title: '전세대출과 질권설정 — 간단히 알려드려요',
+      easy:
+        'HUG·SGI·카카오뱅크·주택금융공사(HF) 어디서 받았든 "전세자금 대출"이라면 모두 "예"를 선택해주세요.\n\n' +
+        '질권설정이란, 은행이 전세대출을 해주면서 "계약이 끝나면 집주인이 돌려주는 보증금은 우리가 직접 받아간다"고 설정해 두는 것입니다. 같은 은행이라도 상품·시기에 따라 설정 여부가 달라, 실제로 본인이 질권설정되어 있는지 모르시는 분이 대부분입니다.',
+      cases: [
+        { q: '질권설정 여부를 어떻게 확인하나요?', a: '전세대출을 받으신 금융사 고객센터에 "제 대출이 질권설정되어 있나요?"라고 문의하시면 확인해 드립니다. 잘 모르시면 "모름"을 선택하세요 — 질권설정 있는 경우와 없는 경우 두 결과를 모두 보여드립니다.' },
+        { q: '질권설정 여부에 따라 뭐가 달라지나요?', a: '질권설정이 있으면 대출금은 은행이 집주인에게서 직접 회수해 가므로 내 신용채권에 포함되지 않고 자산에서 차감됩니다. 질권설정이 없으면 전세금 전액이 내 자산이 되고, 대출금은 내 신용채권에 포함됩니다.' },
+      ],
+      tip: '전세대출이 없으시다면 "아니오"만 선택하시면 됩니다. 질권설정을 따로 확인하실 필요 없어요.',
     },
-    aiSuggestions: ['질권설정인지 어떻게 확인하나요?', 'HUG랑 SGI 차이가 뭐예요?'],
+    aiSuggestions: ['질권설정인지 어떻게 확인하나요?', '전세대출 금액은 원금 기준인가요?'],
+  },
+
+  // =======================================================
+  // 7-B. 사업장 정보 (사업자회생 전용)
+  // =======================================================
+  {
+    id: 'businessGroup',
+    type: 'composite',
+    title: '사업장 정보를 입력해주세요',
+    subtitle: '가게 형태·임차보증금·월 차임·영업비품을 입력하세요',
+    showIf: (a) => a.recoveryType === '사업자회생',
+    fields: [
+      {
+        field: 'businessOfficeType',
+        subType: 'select',
+        label: '가게 형태',
+        options: [
+          { value: 'owned', label: '자가' },
+          { value: 'jeonse', label: '전세' },
+          { value: 'rental', label: '월세' },
+          { value: 'none', label: '해당없음 (재택·무점포)' },
+        ],
+        columns: 2,
+      },
+      {
+        field: 'businessRentDeposit',
+        subType: 'money',
+        label: '가게 임차보증금',
+        hint: '가게 임차보증금은 최우선 변제금이 적용되지 않고 전액 재산가치로 편입됩니다',
+        showIf: (a) => a.businessOfficeType === 'jeonse' || a.businessOfficeType === 'rental',
+      },
+      {
+        field: 'businessMonthlyRent',
+        subType: 'money',
+        label: '가게 월 차임',
+        hint: '월세(차임)를 입력해주세요',
+        showIf: (a) => a.businessOfficeType === 'rental',
+      },
+      {
+        field: 'businessEquipmentValue',
+        subType: 'money',
+        label: '영업비품 환가 예상액',
+        hint: '가게 냉장고·티브이·컴퓨터·책상 등을 중고시세 기준으로 대략적으로 입력해주세요',
+      },
+    ],
+    helpCard: {
+      title: '영업비품이 뭐예요? 왜 재산에 포함되나요?',
+      easy:
+        '사업자회생에서는 사업에 사용 중인 물품도 재산으로 평가됩니다. 대표적으로 회사 차량, 업무용 PC·노트북·모니터·책상·집기 등이 모두 해당합니다.\n\n' +
+        '실제 감정가가 아니라 "지금 중고로 판다면 받을 수 있는 대략적인 금액"의 합계를 입력해주시면 됩니다. 법원도 실무상 사업자의 영업비품에 대해서는 합리적인 추정치를 인정합니다.',
+      cases: [
+        { q: '사업장이 자가인 경우는 어떻게 입력하나요?', a: '"자가"를 선택하시면 임차보증금은 입력하지 않아도 됩니다. 자가 사업장 건물은 주거 단계에서 이미 입력하신 부동산 항목이 있다면 그것으로 반영되며, 별도 사업장 건물이 있다면 전문가 상담이 필요합니다.' },
+        { q: '재택·무점포 사업자는요?', a: '"해당없음"을 선택하시고, 영업비품(노트북·PC·책상 등) 금액만 입력하시면 됩니다.' },
+        { q: '영업비품 금액이 감이 잘 안 와요', a: '정확할 필요 없습니다. 중고 시장에서 대충 팔면 받을 수 있는 금액으로 충분합니다. 노트북·PC·모니터·프린터·책상·의자 등을 감안해 어림잡아 입력해주세요.' },
+      ],
+      tip: '영업비품 금액은 청산가치에 포함되므로, 너무 낮게 적으면 나중에 법원에서 재산으로 더 인정될 수 있습니다. 합리적인 중고 시세 수준으로 입력하시길 권장합니다.',
+    },
+    aiSuggestions: ['영업비품에 뭘 포함해야 하나요?', '회사 차량은 여기에 넣나요? 아니면 개인 차량 항목인가요?'],
   },
 
   // =======================================================
@@ -450,14 +639,14 @@ const questions = [
   },
 
   // =======================================================
-  // 11. 퇴직금 (composite, 퇴직금 선택 시)
+  // 11. 퇴직금 (composite, 퇴직금 선택 시 · 사업자회생 제외)
   // =======================================================
   {
     id: 'retirementGroup',
     type: 'composite',
     title: '퇴직금 정보를 입력해주세요',
     subtitle: '가입 중이신 퇴직금 유형을 선택해주세요',
-    showIf: (a) => (a.otherAssets || []).includes('retirement'),
+    showIf: (a) => (a.otherAssets || []).includes('retirement') && a.recoveryType !== '사업자회생',
     fields: [
       {
         field: 'retirementType',
@@ -558,6 +747,39 @@ const questions = [
     helpCard: {
       title: '이 조건은 왜 물어보나요?',
       easy: '만 30세 미만·65세 이상·장애인·전세사기 피해자 같은 분들은 변제 기간이 기본 3년에서 2년으로 짧아질 수 있습니다. 법원 최종 판단에 따라 달라질 수 있으니 전문가와 확인해보세요.',
+    },
+  },
+
+  // =======================================================
+  // 14-B. 24개월 단축 배제 조건 (특별자격 선택 시에만 노출)
+  // =======================================================
+  {
+    id: 'qualificationExclusions',
+    type: 'multi-select',
+    field: 'qualificationExclusions',
+    title: '24개월 단축 배제 여부',
+    subtitle: '하나라도 해당되면 24개월 단축이 불가능합니다 (36개월로 진단)',
+    showIf: (a) => {
+      const quals = a.specialQualifications || [];
+      return ['under30', 'over65', 'disabled', 'jeonse_victim'].some((q) => quals.includes(q));
+    },
+    options: [
+      { value: 'debt_over_150m', label: '전체 채권금액 1.5억원 초과' },
+      { value: 'creditors_over_2', label: '개인 채권자 2명 초과' },
+      { value: 'speculation_over_20pct', label: '도박·주식·코인 사용 부채가 전체 부채의 20% 초과' },
+      { value: 'none', label: '해당 없음', exclusive: true },
+    ],
+    validation: { required: true },
+    helpCard: {
+      title: '왜 이 조건을 묻나요?',
+      easy:
+        '24개월 단축은 법원이 엄격하게 심사하는 특례입니다. 위 세 조건 중 어느 하나에 해당하면 통상 24개월 단축이 인정되지 않고 기본 36개월로 진행됩니다.\n\n' +
+        '또한 자동 계산 결과 변제율이 20% 미만일 때도 24개월 단축이 인정되지 않습니다.',
+      cases: [
+        { q: '개인 채권자 2명 초과란?', a: '은행·카드사 같은 법인이 아닌 개인(지인·사채업자 등)에게서 빌린 채무의 채권자 수가 2명을 초과하는 경우입니다.' },
+        { q: '도박·주식·코인 20%는 어떻게 계산?', a: '이 원인으로 발생한 채무 금액이 전체 채무의 20%를 초과하면 해당합니다.' },
+      ],
+      tip: '추가 주의사항 (자격별):\n• 30세 미만·65세 이상: 회생법원 관할이 아닌 경우 24개월 단축 신청이 불가능할 수 있습니다.\n• 장애인: 회생법원 관할이 아닌 경우 24개월 단축이 불가능할 수 있으며, 심한 장애가 아닌 경증 장애의 경우에도 불가될 수 있습니다.\n• 전세사기피해자: 국토부 특별법상 "전세사기피해자"로 인정받은 자이며, 위 배제 조건에 해당되지 않는 경우에만 24개월 단축이 가능합니다.',
     },
   },
 

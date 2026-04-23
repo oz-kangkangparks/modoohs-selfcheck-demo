@@ -13,7 +13,7 @@
  */
 
 import {
-  resolveCourt,
+  resolveBestCourt,
   resolveHousingGroup,
   resolveJeonseExemption,
   getHousingBaseIncluded,
@@ -147,14 +147,16 @@ export function calcHousingDeduction({ housingType, monthlyRent, residenceSido, 
 // ================================================================
 
 /**
- * 월 가용소득 = 월소득 − 최저생계비 − 월세추가공제
+ * 월 가용소득 = 월소득 − 최저생계비 − 월세추가공제 − 양육비
  * - 가용소득이 음수라도 **그대로 반환** (0 처리 금지 — 섹션 2-3)
+ * - 양육비 지급(중)·지급하지 못함(법원 의무 발생)은 최저생계비에 포함되어 반영됨
  */
 export function calcDisposableIncome({
   incomeType,
   monthlyIncome = 0,
   familyCount,
   housingDeduction = 0,
+  childSupportExpense = 0,
 }) {
   // incomeType은 배열(다중 선택). 구버전 문자열 호환 위해 정규화.
   const types = Array.isArray(incomeType) ? incomeType : incomeType ? [incomeType] : [];
@@ -162,7 +164,24 @@ export function calcDisposableIncome({
   const income = isJobless ? 0 : Number(monthlyIncome) || 0;
 
   const livingExpense = calcLivingExpense(familyCount);
-  return income - livingExpense - (housingDeduction || 0);
+  return income - livingExpense - (housingDeduction || 0) - (Number(childSupportExpense) || 0);
+}
+
+/**
+ * 이혼 + 미성년 자녀 양육비 지출 산정 (원 단위)
+ * - 지급 중(paying) 또는 지급하지 못함(not_paying) → 입력 금액
+ * - 지급이 없는 이혼(none_agreed) → 0
+ */
+export function calcChildSupportExpense({
+  maritalStatus,
+  minorChildren = 0,
+  childSupportStatus,
+  childSupportAmount = 0,
+}) {
+  if (maritalStatus !== '이혼') return 0;
+  if ((Number(minorChildren) || 0) <= 0) return 0;
+  if (childSupportStatus !== 'paying' && childSupportStatus !== 'not_paying') return 0;
+  return Math.max(0, Number(childSupportAmount) || 0);
 }
 
 
@@ -234,28 +253,71 @@ export function calcRetirementAsset({ retirementType, retirementAmount = 0 }) {
 }
 
 /**
- * 전세 재산 인정액 — 질권설정 유무에 따라 분기, 면제재산 지역별 공제
+ * 사업자 재산 — 사업자회생 선택 시에만 반영
+ *   ① 가게 임차보증금 (전세·월세 선택 시 전액 자산, 최우선 변제금 공제 없음)
+ *   ② 영업비품 환가 예상액 (가게 냉장고·TV·PC·책상 등 중고 합산)
+ */
+export function calcBusinessAssets({
+  recoveryType,
+  businessOfficeType,
+  businessRentDeposit = 0,
+  businessEquipmentValue = 0,
+}) {
+  if (recoveryType !== '사업자회생') {
+    return { rentDeposit: 0, equipment: 0, total: 0 };
+  }
+  const isRental = businessOfficeType === 'rental' || businessOfficeType === 'jeonse';
+  const rentDeposit = isRental ? (Number(businessRentDeposit) || 0) : 0;
+  const equipment = Number(businessEquipmentValue) || 0;
+  return { rentDeposit, equipment, total: rentDeposit + equipment };
+}
+
+/**
+ * 월세 보증금 재산가치 — 지역별 최우선 변제금 공제 후 잔액
+ * 주택임대차보호법상 최우선변제금은 전세·월세 공통 적용
+ */
+export function calcHousingDepositAsset({
+  housingType,
+  housingDeposit = 0,
+  residenceSido,
+  residenceSigungu,
+}) {
+  if (housingType !== '월세') return 0;
+  const deposit = Number(housingDeposit) || 0;
+  if (deposit <= 0) return 0;
+  const exemption = resolveJeonseExemption(residenceSido, residenceSigungu);
+  return Math.max(0, deposit - exemption);
+}
+
+/**
+ * 전세 재산 인정액 — 전세대출 유무 + 질권설정 여부로 분기
  *
- * @param {'yes'|'no'|'unknown'} jeonseLien
- *   yes: 질권설정형 (HUG) → 전세금 − 질권금액, 대출은 채무에서 제외
- *   no : 신용대출형 (카카오·HF) → 전세금 전액, 대출은 채무에 포함
- *   unknown: 알 수 없음 → 별도 처리 (calculateDiagnosis에서 이중 결과 생성)
+ * @param {'yes'|'no'} jeonseHasLoan — 전세대출 유무
+ * @param {'yes'|'no'|'unknown'} jeonseLien — 질권설정 여부 (대출 있을 때만 의미있음)
+ *   yes: 질권설정 → 전세금 − 전세대출 − 면제재산, 대출은 신용채권 미포함
+ *   no : 질권설정 없음 → 전세금 − 면제재산, 대출은 신용채권에 포함 (calcCreditDebt에서 처리)
+ *   unknown: 알 수 없음 → calculateDiagnosis에서 yes/no 두 시나리오로 이중 계산
  */
 export function calcJeonseAsset({
   jeonseAmount = 0,
+  jeonseHasLoan,
+  jeonseLoanAmount = 0,
   jeonseLien,
-  jeonseLienAmount = 0,
   residenceSido,
   residenceSigungu,
 }) {
   const amount = Number(jeonseAmount) || 0;
   if (amount <= 0) return 0;
 
+  const hasLoan = jeonseHasLoan === 'yes';
+  const loan = hasLoan ? (Number(jeonseLoanAmount) || 0) : 0;
+
   let base;
-  if (jeonseLien === 'yes') {
-    base = Math.max(0, amount - (Number(jeonseLienAmount) || 0));
+  if (hasLoan && jeonseLien === 'yes') {
+    // 질권설정: 전세대출금은 은행이 집주인에게서 직접 회수 → 자산에서 차감
+    base = Math.max(0, amount - loan);
   } else {
-    // no / unknown 모두 '전세금 전액' 가정 (unknown은 호출부에서 이중 계산)
+    // 대출 없음, 또는 질권설정 없음(no) / 모름(unknown, 호출부에서 분기) → 전세금 전액
     base = amount;
   }
 
@@ -317,14 +379,33 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
   const jeonse = hasJeonse
     ? calcJeonseAsset({
         jeonseAmount: answers.jeonseAmount,
+        jeonseHasLoan: answers.jeonseHasLoan,
+        jeonseLoanAmount: answers.jeonseLoanAmount,
         jeonseLien: jeonseLienOverride || answers.jeonseLien,
-        jeonseLienAmount: answers.jeonseLienAmount,
         residenceSido: answers.residenceSido,
         residenceSigungu: answers.residenceSigungu,
       })
     : 0;
 
-  const total = realEstate + vehicle + depositInsurance + account + stocks + crypto + retirement + jeonse;
+  // 사업자 — 사업장 임차보증금 + 영업비품
+  const business = calcBusinessAssets({
+    recoveryType: answers.recoveryType,
+    businessOfficeType: answers.businessOfficeType,
+    businessRentDeposit: answers.businessRentDeposit,
+    businessEquipmentValue: answers.businessEquipmentValue,
+  });
+
+  // 월세 보증금 — 지역별 최우선 변제금 공제 후 잔액
+  const housingDeposit = calcHousingDepositAsset({
+    housingType: answers.housingType,
+    housingDeposit: answers.housingDeposit,
+    residenceSido: answers.residenceSido,
+    residenceSigungu: answers.residenceSigungu,
+  });
+
+  const total =
+    realEstate + vehicle + depositInsurance + account + stocks + crypto + retirement +
+    jeonse + business.total + housingDeposit;
 
   return {
     realEstate,
@@ -335,6 +416,10 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
     crypto,
     retirement,
     jeonse,
+    housingDeposit,
+    businessRentDeposit: business.rentDeposit,
+    businessEquipment: business.equipment,
+    businessTotal: business.total,
     total,
   };
 }
@@ -347,16 +432,18 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
 /**
  * 판정·변제에 쓰이는 "신용채무" 금액 산출
  *  - 사용자가 입력한 총 신용채무(totalCreditDebt)
- *  - 전세 신용대출형(무/모름)이면 전세대출금이 포함되어야 함
- *    — UI에서 사용자가 이미 포함해 입력한 경우 중복 가산 방지 위해
- *      `jeonseLoanIncludedInDebt` 플래그를 true로 둠 (기본 true)
+ *  - 전세대출 있음 + 질권설정 없음(no) → 전세대출 원금을 신용채권에 가산
+ *  - unknown은 호출부(calculateDiagnosis)에서 jeonseLienOverride를 'yes'/'no' 두 번 넘겨 이중 계산
  */
 export function calcCreditDebt(answers, { jeonseLienOverride } = {}) {
   const base = Number(answers.totalCreditDebt) || 0;
-  // 현재 구조에서는 사용자가 입력한 총 신용채무에 전세 신용대출금을 포함해 입력하도록 안내 (중복 방지)
-  // → base 그대로 반환
-  // (향후 별도 입력 분리 시 override로 분기)
-  void jeonseLienOverride;
+  if (answers.housingType !== '전세') return base;
+  if (answers.jeonseHasLoan !== 'yes') return base;
+
+  const effectiveLien = jeonseLienOverride || answers.jeonseLien;
+  if (effectiveLien === 'no') {
+    return base + (Number(answers.jeonseLoanAmount) || 0);
+  }
   return base;
 }
 
@@ -366,8 +453,9 @@ export function calcCreditDebt(answers, { jeonseLienOverride } = {}) {
 // ================================================================
 
 /**
- * 주택·차량·보험 약관·청약 담보·전세 질권설정 중 어느 하나라도
+ * 주택·차량·보험 약관·청약 담보 중 어느 하나라도
  * 담보대출이 존재하면 true
+ * ※ 전세대출 질권설정은 담보대출이 아닌 특수 회수 구조이므로 제외
  */
 export function hasAnyCollateralLoan(answers) {
   if (answers.housingType === '자가' && (Number(answers.realEstateMortgage) || 0) > 0) return true;
@@ -375,7 +463,6 @@ export function hasAnyCollateralLoan(answers) {
   if (assets.includes('vehicle') && (Number(answers.vehicleLoan) || 0) > 0) return true;
   if (assets.includes('insurance') && (Number(answers.insurancePolicyLoan) || 0) > 0) return true;
   if (assets.includes('account') && (Number(answers.accountCollateralLoan) || 0) > 0) return true;
-  if (answers.housingType === '전세' && answers.jeonseLien === 'yes' && (Number(answers.jeonseLienAmount) || 0) > 0) return true;
   return false;
 }
 
@@ -387,7 +474,6 @@ export function listCollateralLoans(answers) {
   if (assets.includes('vehicle') && (Number(answers.vehicleLoan) || 0) > 0) items.push('차량 담보대출');
   if (assets.includes('insurance') && (Number(answers.insurancePolicyLoan) || 0) > 0) items.push('보험 약관대출');
   if (assets.includes('account') && (Number(answers.accountCollateralLoan) || 0) > 0) items.push('청약 담보대출');
-  if (answers.housingType === '전세' && answers.jeonseLien === 'yes' && (Number(answers.jeonseLienAmount) || 0) > 0) items.push('전세 질권설정');
   return items;
 }
 
@@ -397,18 +483,29 @@ export function listCollateralLoans(answers) {
 // ================================================================
 
 /**
- * 24개월 단축 특례 적용 여부
+ * 24개월 단축 특례 적용 여부 (사전 판정)
  * - 자격(나이·장애·전세사기 피해자 등) 중 하나 이상 충족
+ * - **관할이 회생법원이어야 함** (지방법원 관할 시 24개월 불가)
  * - 채무 사용처에 도박·주식·코인이 없어야 함
+ * - 배제조건(qualificationExclusions) 중 하나라도 해당되면 불가
+ * ※ 변제율 20% 미만 배제는 paymentPlan 계산 후 사후 검증(calculateSingleScenario에서 수행)
  */
-export function applies24MonthSpecial(answers) {
+export function applies24MonthSpecial(answers, { isRehabCourt = true } = {}) {
   const quals = answers.specialQualifications || [];
   const hasQualification = quals.some(q => SPECIAL_QUALS.has(q));
   if (!hasQualification) return false;
 
+  // 회생법원 관할이 아니면 24개월 단축 특례 불가
+  if (!isRehabCourt) return false;
+
   const usages = answers.debtCauses || [];
   const hasDisqualifying = usages.some(u => DISQUALIFYING_USAGES.has(u));
   if (hasDisqualifying) return false;
+
+  // 배제조건 — 하나라도 체크(non-none)이면 24개월 불가
+  const exclusions = answers.qualificationExclusions || [];
+  const hasExclusion = exclusions.some(e => e && e !== 'none');
+  if (hasExclusion) return false;
 
   return true;
 }
@@ -459,6 +556,9 @@ export function calcPaymentPlan({ disposableIncome, liquidationValue, creditDebt
 
   const totalPayment = monthlyPayment * period;
   const exemption = Math.max(0, creditDebt - totalPayment);
+  // 변제율 / 감면율 (creditDebt === 0 방어)
+  const repaymentRate = creditDebt > 0 ? Math.min(1, totalPayment / creditDebt) : 0;
+  const exemptionRate = creditDebt > 0 ? Math.max(0, 1 - totalPayment / creditDebt) : 0;
 
   return {
     basePeriod,
@@ -467,6 +567,8 @@ export function calcPaymentPlan({ disposableIncome, liquidationValue, creditDebt
     minPayment,
     totalPayment,
     exemption,
+    repaymentRate,
+    exemptionRate,
     forcedUpward,
     feasible,
   };
@@ -516,7 +618,7 @@ export function determineVerdict({ creditDebt, liquidationValue, disposableIncom
   }
   return {
     verdict: VERDICT.POSSIBLE,
-    title: '회생이 가능한 것으로 보입니다',
+    title: '회생절차를 이용하실 수 있습니다',
     detail: '회생 신청 기본 조건을 모두 충족하셨어요. 아래 예상 변제 계획을 참고하시고, 실제 진행 전에는 꼭 전문가와 구체적인 절차를 의논하세요.',
   };
 }
@@ -549,25 +651,40 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     familyCount,
   });
 
+  // 양육비 (이혼 + 미성년 자녀 + 지급 중/지급 안 함)
+  const childSupportExpense = calcChildSupportExpense({
+    maritalStatus: answers.maritalStatus,
+    minorChildren: answers.minorChildren,
+    childSupportStatus: answers.childSupportStatus,
+    childSupportAmount: answers.childSupportAmount,
+  });
+
   // 가용소득 (마이너스 허용)
   const disposableIncome = calcDisposableIncome({
     incomeType: answers.incomeType,
     monthlyIncome: answers.monthlyIncome,
     familyCount,
     housingDeduction,
+    childSupportExpense,
   });
 
-  // 관할 법원
-  const court = resolveCourt(answers.residenceSido, answers.residenceSigungu);
+  // 관할 법원 — 거주지·직장지 중 회생법원 관할이 있으면 자동 우선 선택
+  const court = resolveBestCourt({
+    residenceSido: answers.residenceSido,
+    residenceSigungu: answers.residenceSigungu,
+    workSido: answers.workSido,
+    workSigungu: answers.workSigungu,
+  });
   const isRehabCourt = court.recommended === 'rehab' && !!court.rehab;
 
   // 청산가치
   const liquidation = calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride });
   const creditDebt = calcCreditDebt(answers, { jeonseLienOverride });
 
-  // 24개월 특례
-  const is24Special = applies24MonthSpecial(answers);
-  const basePeriod = is24Special ? SPECIAL_PERIOD : DEFAULT_PERIOD;
+  // 24개월 특례 (사전 판정) — 회생법원 관할 여부 반영
+  let is24Special = applies24MonthSpecial(answers, { isRehabCourt });
+  let basePeriod = is24Special ? SPECIAL_PERIOD : DEFAULT_PERIOD;
+  let special24Blocked = false; // 사전 자격은 되지만 배제조건·변제율로 탈락했는지
 
   // 판정
   const minPayment = Math.round(liquidation.total * MIN_PAYMENT_MULTIPLIER);
@@ -587,16 +704,64 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
       creditDebt,
       basePeriod,
     });
+
+    // 24개월 사후 검증 — 변제율 20% 미만이면 24개월 불가, 36개월로 재계산
+    if (is24Special && paymentPlan && paymentPlan.repaymentRate < 0.2) {
+      is24Special = false;
+      special24Blocked = true;
+      basePeriod = DEFAULT_PERIOD;
+      paymentPlan = calcPaymentPlan({
+        disposableIncome,
+        liquidationValue: liquidation.total,
+        creditDebt,
+        basePeriod,
+      });
+    }
   }
 
   // 경고 수집 (일반 고객 눈높이 메시지)
   const warnings = [];
 
-  if (hasAnyCollateralLoan(answers)) {
+  // 부동산 담보대출 — 별도 상세 경고
+  if (answers.housingType === '자가' && (Number(answers.realEstateMortgage) || 0) > 0) {
     warnings.push({
       severity: 'error',
-      title: '담보대출이 있어요 — 꼭 전문가와 상담하세요',
-      detail: `확인된 담보대출: ${listCollateralLoans(answers).join(', ')}. 회생 진행 중 담보로 잡힌 집·차 등이 경매로 처분될 수 있어요. 회생 시작 전에 반드시 전문가와 먼저 이야기해보세요.`,
+      title: '부동산 담보대출이 있다면 반드시 전문가와 상의하세요',
+      detail:
+        '부동산 담보대출은 어느 금융기관인지에 따라 처리 방식이 달라질 수 있습니다. ' +
+        '예를 들어, 일부 시중은행은 회생절차를 진행하더라도 인가 후 담보권 실행(경매)이 진행될 수 있습니다. ' +
+        '반면, 지방은행이나 상호금융기관은 이자나 원리금을 계속 정상적으로 납부하면 유지가 가능한 경우도 있습니다. ' +
+        '따라서 같은 담보대출이라도 금융기관에 따라 처리가 다를 수 있으므로 사전에 정확한 확인이 필요합니다.',
+    });
+  }
+
+  // 차량 담보대출 — 별도 상세 경고
+  const _hasVehicleLoan =
+    (answers.otherAssets || []).includes('vehicle') && (Number(answers.vehicleLoan) || 0) > 0;
+  if (_hasVehicleLoan) {
+    warnings.push({
+      severity: 'error',
+      title: '차량 담보대출이 있는 경우 반드시 전문가의 도움을 받으세요',
+      detail:
+        '차량을 유지하기 위해서는 회생절차와 무관하게 연체 없이 개별 변제를 하셔야 합니다. ' +
+        '차량이 불필요하다면 채권사에 연락하여 차량을 인도하셔야 하며, ' +
+        '매각된 차량에 잔존 채무가 발생한다면 신용채무로 전환되어 회생채권으로 포함해 진행할 수 있습니다.',
+    });
+  }
+
+  // 그 외 담보대출 (보험 약관·청약 담보) — 일반 경고
+  const _otherCollateral = [];
+  if ((answers.otherAssets || []).includes('insurance') && (Number(answers.insurancePolicyLoan) || 0) > 0) {
+    _otherCollateral.push('보험 약관대출');
+  }
+  if ((answers.otherAssets || []).includes('account') && (Number(answers.accountCollateralLoan) || 0) > 0) {
+    _otherCollateral.push('청약 담보대출');
+  }
+  if (_otherCollateral.length > 0) {
+    warnings.push({
+      severity: 'warning',
+      title: '담보대출이 있어요 — 확인해주세요',
+      detail: `확인된 담보대출: ${_otherCollateral.join(', ')}. 이 대출들은 통상 해약환급금·청약금과 상계 처리되므로 신용채권에 포함되지 않으며, 회생 진행에도 큰 영향은 없습니다.`,
     });
   }
 
@@ -650,6 +815,240 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     });
   }
 
+  // ================================================================
+  // 법원 실무 안내 (notices) — 가족 구성 기반
+  // ================================================================
+  const notices = [];
+  const childrenCount = Number(answers.minorChildren) || 0;
+
+  // (1) 이혼 + 미성년 자녀 + 양육비 지급/미지급 → 양육비 지급 신고의무
+  if (
+    answers.maritalStatus === '이혼' &&
+    childrenCount > 0 &&
+    (answers.childSupportStatus === 'paying' || answers.childSupportStatus === 'not_paying')
+  ) {
+    notices.push({
+      id: 'childSupport',
+      title: '양육비 지급 신고의무',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '채무자는 전 배우자에게 이 사건 수입과 지출에 관한 목록, 변제계획안 기재 ' +
+            '자녀양육비(추가생계비)를 매월 성실하게 지급할 것이며, 채권자집회 후 7일 이내에 ' +
+            '변제개시일부터 그 기일까지의 양육비 지급 사실에 관한 금융거래내역을 제출하고, ' +
+            '변제수행 완료 후 면책을 신청할 경우 변제수행 기간 동안 양육비 전액 지급 사실에 관한 ' +
+            '금융거래내역을 법원에 제출하여야 한다는 기타사항 10번에 해당하므로 체크하게 됩니다.',
+        },
+        {
+          type: 'p',
+          text: '또한, 신청서 수입 및 지출에 관한 목록 중 생계비의 지출 내역에서 양육비 지급금액을 기재하게 됩니다.',
+        },
+        {
+          type: 'p',
+          text:
+            '이혼 후 경제적인 이유로 미성년 자녀가 있음에도 불구하고 이혼확인서·양육비 부담조서상 ' +
+            '합의된 양육비를 지급하지 못하는 경우가 있습니다. 이때 법원은 양육비를 허투루 사용하지 않는지 ' +
+            '위와 같이 추적 확인을 합니다. 법원은 채권자의 일반 이익보다 양육비를 우선 고려하고 있으므로 ' +
+            '신청인의 입장에서는 경제적으로 도움이 되는 부분입니다. 결국 일반 채권자들에게 돌아가야 하는 ' +
+            '변제재원을 양육비로 사용할 수 있습니다.',
+        },
+        {
+          type: 'note',
+          text: '입력하신 양육비 금액은 최저생계비에 포함되어 월 가용소득 계산에 반영되었습니다.',
+        },
+      ],
+    });
+  }
+
+  // (2) 기혼 + 미성년 자녀 + 맞벌이 → 공동부양 원칙 + 지방법원 시 배우자 재산 취급
+  if (
+    answers.maritalStatus === '기혼' &&
+    childrenCount > 0 &&
+    answers.spouseIncome === 'yes'
+  ) {
+    const blocks = [
+      {
+        type: 'p',
+        text:
+          `미성년 부양가족 자녀가 ${childrenCount}명이 있고, 배우자에게 현재 소득이 있는 경우에는 ` +
+          `부양평등의 원칙에 따라 공동부양으로 진행됩니다. 따라서 최저생계비는 ${familyCount}명분 정도가 ` +
+          '인정될 것으로 예상됩니다. 다만, 배우자에게 근로소득이 있더라도 과다한 채무로 인해 실제로 ' +
+          '최저생계비조차 보장되지 않는 상황이라면, 예외적으로 해당 자녀를 채무자의 부양가족으로 ' +
+          '인정받을 가능성이 있습니다.',
+      },
+    ];
+
+    if (!isRehabCourt) {
+      blocks.push({
+        type: 'p',
+        text:
+          '※ 관할이 회생법원이 아닌 지방법원인 경우, 배우자 명의의 부동산이나 차량이 있을 때 ' +
+          '그 환가액의 1/2이 채무자의 재산으로 취급되어 재산목록에 반영될 수 있고, 청산가치 산정에도 ' +
+          '포함될 수 있습니다.',
+      });
+    }
+
+    notices.push({
+      id: 'jointSupport',
+      title: '공동부양 원칙 및 배우자 재산 취급',
+      blocks,
+    });
+  }
+
+  // (3) 만 65세 이상 부양 부모 → 실질적 부양 필요성
+  if ((Number(answers.dependentParents) || 0) > 0) {
+    notices.push({
+      id: 'parentDependency',
+      title: '부양가족 인정 — 부모 부양',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '법원은 만 65세 이상인지 여부만을 기계적으로 판단하지는 않습니다. 핵심은 현재 실제로 ' +
+            '부양의 도움이 필요한 상태인지 여부입니다.',
+        },
+        {
+          type: 'p',
+          text:
+            '만 65세 미만이라 하더라도 건강이 좋지 않거나 가족의 간병이 필요하여 경제활동이 어려운 ' +
+            '상황이라면 충분히 부양가족으로 인정될 수 있습니다. 반대로 만 65세 이상이라 하더라도 ' +
+            '재산과 소득이 충분하고 다른 형제자매의 부양 여력이 채무자보다 더 크다면, 비록 함께 ' +
+            '거주하고 있더라도 부양가족으로 인정되기 어려울 수 있습니다.',
+        },
+        {
+          type: 'p',
+          text:
+            '따라서 실무상으로는 부양 필요성을 뒷받침할 수 있는 객관적인 자료가 매우 중요합니다. ' +
+            '예를 들면 아래와 같은 자료가 필요할 수 있습니다.',
+        },
+        {
+          type: 'ul',
+          items: [
+            '부모의 지방세 세목별 과세증명서',
+            '부모의 건강보험 자격득실확인서',
+            '부모의 병원 진단서 또는 소견서',
+            '부모의 병원비 지출내역서',
+            '채무자의 양육비 또는 생활비 지급 관련 금융자료',
+            '부모의 기초연금 수급 관련 자료 등',
+          ],
+        },
+        {
+          type: 'p',
+          text:
+            '즉, 단순히 연령만으로 판단할 것이 아니라, 소득·재산·건강상태·실제 부양 여부를 ' +
+            '종합적으로 검토하여 결정됩니다.',
+        },
+      ],
+    });
+  }
+
+  // (4) 24개월 단축 자격 — 자격별 주의사항
+  //  ※ 이미 24개월이 확정 배제된 경우(is24Special === false)에는 구체적 배제 notice가 별도로 추가되므로
+  //    일반 주의사항은 생략한다 (중복·혼동 방지).
+  const specialQuals = answers.specialQualifications || [];
+  const hasAgeQual = specialQuals.includes('under30') || specialQuals.includes('over65');
+  const hasDisabledQual = specialQuals.includes('disabled');
+  const hasJeonseVictimQual = specialQuals.includes('jeonse_victim');
+
+  if (is24Special && hasAgeQual) {
+    notices.push({
+      id: 'special24_age',
+      title: '24개월 단축 주의사항 — 30세 미만·65세 이상',
+      blocks: [
+        { type: 'p', text: '※ 회생법원 관할이 아닌 경우 24개월 단축 신청이 불가능할 수 있습니다.' },
+      ],
+    });
+  }
+  if (is24Special && hasDisabledQual) {
+    notices.push({
+      id: 'special24_disabled',
+      title: '24개월 단축 주의사항 — 장애인',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '※ 회생법원 관할이 아닌 경우 24개월 단축 신청이 불가능할 수 있으며, ' +
+            '심한 장애가 아닌 경증 장애의 경우에도 불가될 수 있습니다.',
+        },
+      ],
+    });
+  }
+  if (is24Special && hasJeonseVictimQual) {
+    notices.push({
+      id: 'special24_jeonseVictim',
+      title: '24개월 단축 주의사항 — 전세사기 피해자',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '※ 국토부 특별법상 "전세사기피해자"로 인정받은 자이며, ' +
+            '위 배제 조건에 해당되지 않는 경우에만 24개월 단축이 가능합니다.',
+        },
+      ],
+    });
+  }
+
+  // (5) 24개월 사후 배제 (변제율 20% 미만 등으로 탈락한 경우)
+  if (special24Blocked) {
+    notices.push({
+      id: 'special24_blocked',
+      title: '24개월 단축 불가 — 36개월로 진단됨',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '자동 계산 결과 변제율이 20% 미만으로 산출되어 24개월 단축이 인정되지 않습니다. ' +
+            '기본 변제 기간인 36개월 기준으로 변제 계획이 조정되었습니다.',
+        },
+      ],
+    });
+  }
+
+  // (6-a) 24개월 자격 보유자이지만 관할이 회생법원이 아님 → 배제
+  const hasSpecialQual = (answers.specialQualifications || []).some((q) => SPECIAL_QUALS.has(q));
+  if (hasSpecialQual && !isRehabCourt) {
+    notices.push({
+      id: 'special24_nonRehabCourt_blocked',
+      title: '24개월 단축 불가 — 회생법원 관할 아님',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            `현재 예상 관할 법원이 "${court.courtName || '지방법원'}"로 회생법원이 아닙니다. ` +
+            '24개월 단축 특례는 서울·수원·부산·대전·대구·광주 등 회생법원 관할인 경우에만 적용 가능하므로, ' +
+            '기본 변제 기간인 36개월 기준으로 변제 계획이 산정되었습니다.',
+        },
+      ],
+    });
+  }
+
+  // (6-b) 24개월 자격 보유자이지만 채무 사유에 투기성(도박·주식·코인) 포함 → 배제
+  const hasSpeculativeDebt = (answers.debtCauses || []).some((u) => DISQUALIFYING_USAGES.has(u));
+  if (hasSpecialQual && hasSpeculativeDebt) {
+    const _specList = (answers.debtCauses || [])
+      .filter((u) => DISQUALIFYING_USAGES.has(u))
+      .map((u) => ({ gambling: '도박', stocks: '주식 투자', crypto: '코인(가상자산)' }[u] || u))
+      .join(', ');
+    notices.push({
+      id: 'special24_speculation_blocked',
+      title: '24개월 단축 불가 — 채무 사유에 투기성 원인 포함',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            `채무 발생 주요 원인에 "${_specList}"이(가) 포함되어 있어 특별자격을 보유하셨더라도 ` +
+            '24개월 단축 특례가 인정되지 않습니다. 기본 변제 기간인 36개월 기준으로 변제 계획이 산정되었습니다.',
+        },
+        {
+          type: 'p',
+          text:
+            '※ 입력하신 내용과 실제 채무 발생 사유가 다르다면 "채무 발생 주요 원인" 섹션의 [수정] 버튼으로 내용을 변경해보세요.',
+        },
+      ],
+    });
+  }
+
   return {
     scenarioLabel: jeonseLienOverride
       ? (jeonseLienOverride === 'yes' ? '전세 질권설정 O' : '전세 질권설정 X')
@@ -658,16 +1057,19 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     court,
     livingExpense,
     housingDeduction,
+    childSupportExpense,
     disposableIncome,
     liquidation,
     creditDebt,
     minPayment,
     is24Special,
+    special24Blocked,
     verdict: verdictInfo.verdict,
     verdictTitle: verdictInfo.title,
     verdictDetail: verdictInfo.detail,
     paymentPlan,
     warnings,
+    notices,
   };
 }
 
@@ -676,8 +1078,12 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
  * - 질권설정 'unknown' 입력 시 유/무 두 시나리오 결과를 모두 생성해 반환
  */
 export function calculateDiagnosis(answers) {
-  // 질권 '모름'이면 두 케이스 병행 계산
-  if (answers.housingType === '전세' && answers.jeonseLien === 'unknown') {
+  // 질권 '모름'이면 두 케이스 병행 계산 (전세대출이 있을 때만 의미있음)
+  if (
+    answers.housingType === '전세' &&
+    answers.jeonseHasLoan === 'yes' &&
+    answers.jeonseLien === 'unknown'
+  ) {
     const withLien = calculateSingleScenario(answers, { jeonseLienOverride: 'yes' });
     const withoutLien = calculateSingleScenario(answers, { jeonseLienOverride: 'no' });
     return {
@@ -702,26 +1108,24 @@ export function calculateDiagnosis(answers) {
 // 13. 유틸리티
 // ================================================================
 
-/** 숫자 → "1억 2,345만원" 형태 문자열 */
+/** 숫자 → "1억 2,345만원" 형태 문자열 (만원 단위 이하 절사) */
 export function formatKoreanMoney(num) {
   if (!num || num === 0) return '0원';
-  const abs = Math.abs(num);
   const sign = num < 0 ? '-' : '';
+  const abs = Math.abs(num);
 
-  if (abs >= 100_000_000) {
-    const eok = Math.floor(abs / 100_000_000);
-    const rem = abs % 100_000_000;
-    const man = Math.floor(rem / 10_000);
+  // 만원 단위 이하 절사
+  const truncated = Math.floor(abs / 10_000) * 10_000;
+  if (truncated === 0) return '0원';
+
+  if (truncated >= 100_000_000) {
+    const eok = Math.floor(truncated / 100_000_000);
+    const man = Math.floor((truncated % 100_000_000) / 10_000);
     if (man > 0) return `${sign}${eok}억 ${man.toLocaleString()}만원`;
     return `${sign}${eok}억원`;
   }
-  if (abs >= 10_000) {
-    const man = Math.floor(abs / 10_000);
-    const rem = abs % 10_000;
-    if (rem > 0) return `${sign}${man.toLocaleString()}만 ${rem.toLocaleString()}원`;
-    return `${sign}${man.toLocaleString()}만원`;
-  }
-  return `${sign}${abs.toLocaleString()}원`;
+  const man = truncated / 10_000;
+  return `${sign}${man.toLocaleString()}만원`;
 }
 
 /** 만원 단위 입력 → 원 단위 */

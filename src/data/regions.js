@@ -115,6 +115,40 @@ export function resolveCourt(sido, sigungu) {
   return { ...info, courtName };
 }
 
+/**
+ * 거주지·직장지 중 "회생법원" 관할인 곳을 우선 선택
+ *  - 회생법원은 채무자에게 유리(24개월 단축 특례, 더 유연한 실무 처리 등)하므로
+ *    둘 중 하나라도 회생법원 관할이면 그곳을 자동 선택한다.
+ *  - 둘 다 회생법원이면 거주지 우선. 둘 다 지방법원이면 거주지 기준.
+ *
+ * @param {object} answers — residenceSido, residenceSigungu, workSido, workSigungu
+ * @returns 기존 resolveCourt 리턴 + basedOn('residence'|'work')
+ */
+export function resolveBestCourt({ residenceSido, residenceSigungu, workSido, workSigungu } = {}) {
+  const residenceCourt = resolveCourt(residenceSido, residenceSigungu);
+  const residenceIsRehab = residenceCourt.recommended === 'rehab' && !!residenceCourt.rehab;
+
+  // 거주지가 이미 회생법원이면 그대로 사용
+  if (residenceIsRehab) {
+    return { ...residenceCourt, basedOn: 'residence' };
+  }
+
+  // 직장지가 입력되지 않았으면 거주지 그대로
+  if (!workSido || !workSigungu) {
+    return { ...residenceCourt, basedOn: 'residence' };
+  }
+
+  // 직장지가 회생법원이면 직장지 기준
+  const workCourt = resolveCourt(workSido, workSigungu);
+  const workIsRehab = workCourt.recommended === 'rehab' && !!workCourt.rehab;
+  if (workIsRehab) {
+    return { ...workCourt, basedOn: 'work' };
+  }
+
+  // 둘 다 지방법원이면 거주지 기준
+  return { ...residenceCourt, basedOn: 'residence' };
+}
+
 // ============================================================
 // 3. 주거비 지역 그룹 (1~4) — 월세 공제 한도
 // ============================================================

@@ -53,7 +53,7 @@ export default function HelpSheet({ isOpen, onClose, helpCard }) {
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-text)', marginBottom: 6, lineHeight: 1.5 }}>
                       Q. {c.q}
                     </div>
-                    <p style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--c-text-sub)', margin: 0 }}>
+                    <p style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--c-text-sub)', margin: 0, whiteSpace: 'pre-line', wordBreak: 'keep-all' }}>
                       {c.a}
                     </p>
                   </div>
