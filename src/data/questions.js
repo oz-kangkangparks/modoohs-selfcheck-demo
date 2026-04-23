@@ -248,7 +248,7 @@ const questions = [
     id: 'incomeGroup',
     type: 'composite',
     title: '월 소득을 알려주세요',
-    subtitle: '세금 떼기 전 금액으로 입력해주세요',
+    subtitle: '실제로 수령한 세후 금액으로 입력해주세요',
     fields: [
       {
         field: 'incomeType',
@@ -266,11 +266,21 @@ const questions = [
       {
         field: 'monthlyIncome',
         subType: 'money',
-        label: '월 평균 총 소득 (세전·합산)',
-        hint:
-          '선택하신 모든 소득을 합산해 입력해주세요. ' +
-          '급여는 세금 떼기 전 금액(통장 입금액 아님), ' +
-          '사업소득은 매출에서 인건비·임대료·재료비 등 필요경비를 뺀 순소득 기준으로 합산합니다.',
+        label: '월 평균 총 소득 (세후·합산)',
+        hint: (a) => {
+          const t = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
+          const lines = ['선택하신 모든 소득을 합산해 입력해주세요.'];
+          if (t.includes('급여')) {
+            lines.push('• 급여: 급여는 세금을 공제한 월 평균금액으로 기입하세요.');
+          }
+          if (t.includes('영업사업')) {
+            lines.push('• 사업: 영업소득자의 경우 인건비·임대료·재료비 각종 필요경비를 제외한 월 평균 영업이익금을 기입하세요.');
+          }
+          if (t.includes('연금')) {
+            lines.push('• 연금: 국민연금·기초연금·양육수당·위자료·수급비·보훈급여 등 해당되는 금액 모두를 합산하여 기입하세요.');
+          }
+          return lines.join('\n');
+        },
         showIf: (a) => {
           const t = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
           return t.length > 0 && !(t.length === 1 && t[0] === '무직');
@@ -281,15 +291,16 @@ const questions = [
       title: '여러 소득이 있을 때 어떻게 입력하나요?',
       easy:
         '직장에 다니면서 개인사업자로 부업을 하거나, 국민연금·기초생활수급을 함께 받는 분이 많아요. ' +
-        '해당되는 유형을 모두 선택하시고, 금액은 모든 소득을 합한 월 평균 금액을 입력하시면 됩니다.',
+        '해당되는 유형을 모두 선택하시고, 금액은 실제 수령액 기준(세후·순이익)으로 합한 월 평균 금액을 입력하시면 됩니다.',
       cases: [
-        { q: '급여 + 사업소득이 같이 있어요', a: '두 가지 모두 체크하고, 세전 급여 + 사업 순소득(매출 − 필요경비)을 합산해 입력하세요.' },
-        { q: '사업소득은 어떻게 계산하나요?', a: '월 매출에서 인건비·임대료·재료비 등 사업에 꼭 드는 비용(필요경비)을 뺀 순소득을 기준으로 합산해주세요.' },
-        { q: '국민연금·기초생활수급도 소득인가요?', a: '네, 매월 정기적으로 받는 금액은 모두 소득에 포함합니다. 해당 항목을 체크하고 금액에 더해 입력해주세요.' },
+        { q: '급여는 어떻게 입력하나요?', a: '급여소득자는 세금 공제액을 제외한 월 평균 실수령액(통장 입금액 기준)을 입력하세요.' },
+        { q: '사업소득은 어떻게 계산하나요?', a: '월 매출에서 인건비·임대료·재료비 등 필요 경비를 제외한 월 평균 영업이익(순이익)을 기준으로 합산해주세요.' },
+        { q: '급여 + 사업소득이 같이 있어요', a: '두 가지 모두 체크하고, 세후 급여 실수령액 + 사업 순이익(매출 − 필요경비)을 합산해 입력하세요.' },
+        { q: '국민연금·기초생활수급도 소득인가요?', a: '네, 매월 정기적으로 수령하는 금액은 모두 소득에 포함합니다. 해당 항목을 체크하고 금액에 더해 입력해주세요.' },
       ],
-      tip: '세전 급여는 급여명세서·원천징수영수증·홈택스에서 확인 가능합니다.',
+      tip: '세후 급여는 급여명세서의 "실수령액" 또는 통장 입금액 기준으로 확인 가능합니다.',
     },
-    aiSuggestions: ['직장인인데 사업도 하고 있어요', '사업소득 순매출 계산이 헷갈려요', '연금이랑 급여 같이 받으면 어떻게 적나요?'],
+    aiSuggestions: ['직장인인데 사업도 하고 있어요', '사업소득 순이익 계산이 헷갈려요', '연금이랑 급여 같이 받으면 어떻게 적나요?'],
   },
 
   // =======================================================
@@ -306,10 +317,10 @@ const questions = [
         subType: 'select',
         label: '주거 형태',
         options: [
-          { value: '자가', label: '자가 (내 명의 or 공동)' },
+          { value: '자가', label: '자가 또는 공동명의' },
           { value: '전세', label: '전세' },
           { value: '월세', label: '월세' },
-          { value: '기타', label: '기타 (가족·무상 거주 등)' },
+          { value: '기타', label: '기타(가족·지인 무상거주)' },
         ],
         columns: 2,
       },
@@ -511,7 +522,8 @@ const questions = [
     subtitle: '해당되는 항목을 모두 선택 (없으면 "없음")',
     options: [
       { value: 'vehicle', label: '차량', desc: '자동차·오토바이 (본인 명의)' },
-      { value: 'deposit', label: '예금·적금', desc: '은행 예금, 적금' },
+      { value: 'deposit', label: '예금', desc: '은행 예금 잔액' },
+      { value: 'savings', label: '적금', desc: '은행 적금 잔액' },
       { value: 'insurance', label: '보험', desc: '해약환급금이 있는 보험' },
       { value: 'account', label: '청약', desc: '주택청약 종합저축 등' },
       { value: 'stocks', label: '주식', desc: '보유 주식 평가액' },
@@ -547,10 +559,32 @@ const questions = [
         subType: 'money',
         label: '차량 담보대출 잔액 (없으면 0)',
       },
+      {
+        field: 'vehicleAuction',
+        subType: 'select',
+        label: '차량 담보대출이 차량 시세보다 큽니다. 차량을 공매 처분하시겠습니까?',
+        hint: '예 → 차량을 매각 처분, 매각대금 부족분은 신용채무로 편입됩니다.\n아니오 → 차량을 유지하며 별제권(개별 변제) 처리됩니다.',
+        options: [
+          { value: 'yes', label: '예 (공매 처분)' },
+          { value: 'no', label: '아니오 (차량 유지, 별제권)' },
+        ],
+        columns: 1,
+        showIf: (a) => {
+          const v = Number(a.vehicleValue) || 0;
+          const l = Number(a.vehicleLoan) || 0;
+          return v > 0 && l > v;
+        },
+      },
     ],
     helpCard: {
-      title: '차량 대출이 시세보다 크면요?',
-      easy: '차량 대출 잔액이 시세보다 커도 재산 계산에서 따로 마이너스로 잡히지 않아요. "차량으로 남는 돈이 없음"으로만 처리됩니다.',
+      title: '차량 대출이 시세보다 크면 어떻게 되나요?',
+      easy:
+        '담보대출 잔액이 차량 시세보다 큰 경우, 두 가지 중 하나를 선택할 수 있습니다.\n\n' +
+        '① 공매 처분(예): 차량을 매각해 대출 일부를 상환하고, 매각대금으로도 다 갚지 못한 잔존 채무는 신용채무(회생채권)로 편입됩니다. 계산식은 "차량 시세 × 0.5 − 담보대출"의 음수분이 신용채무에 가산됩니다.\n\n' +
+        '② 별제권 유지(아니오): 차량을 유지하면서 회생절차와 무관하게 개별 변제를 계속합니다. 재산가치는 0원으로 처리되며 신용채무에 가산되지 않습니다.',
+      cases: [
+        { q: '어떤 쪽이 유리한가요?', a: '공매 처분은 차량을 잃는 대신 잔존 채무가 회생채권에 편입되어 일부 탕감 가능. 별제권 유지는 차량을 지키는 대신 대출은 온전히 개별 변제해야 합니다. 각자 상황에 따라 전문가 상담이 필요합니다.' },
+      ],
       tip: '리스·렌트 차량은 본인 명의가 아니므로 재산에 포함하지 않으셔도 됩니다.',
     },
   },
@@ -565,16 +599,24 @@ const questions = [
     subtitle: '보유하신 금융 자산의 현재 금액을 입력해주세요',
     showIf: (a) => {
       const assets = a.otherAssets || [];
-      return ['deposit', 'insurance', 'account', 'stocks', 'crypto'].some((k) => assets.includes(k));
+      return ['deposit', 'savings', 'insurance', 'account', 'stocks', 'crypto'].some((k) => assets.includes(k));
     },
     fields: [
       // 예금
       {
         field: 'depositValue',
         subType: 'money',
-        label: '예금·적금 합계',
-        hint: '은행 예금 + 적금 잔액 전체',
+        label: '예금 잔액',
+        hint: '은행 예금 잔액 — 압류금지 공제 250만원이 적용됩니다',
         showIf: (a) => (a.otherAssets || []).includes('deposit'),
+      },
+      // 적금
+      {
+        field: 'savingsValue',
+        subType: 'money',
+        label: '적금 잔액',
+        hint: '은행 적금 잔액 — 공제 없이 전액 재산으로 반영됩니다',
+        showIf: (a) => (a.otherAssets || []).includes('savings'),
       },
       // 보험
       {
@@ -635,6 +677,49 @@ const questions = [
       title: '소액이라도 입력해야 하나요?',
       easy: '예금과 보험 해약환급금을 합한 금액이 250만원 이하라면 법적으로 재산에서 제외되니 걱정하지 않으셔도 돼요. 그래도 보유하신 금액을 정확히 입력해주시는 것이 진단에 도움이 됩니다.',
       tip: '보험 해약환급금은 보험사 앱이나 고객센터에서 확인하실 수 있어요. 정확히 모르시면 "모름"을 선택하셔도 됩니다.',
+    },
+  },
+
+  // =======================================================
+  // 10-B. 사망보험금 (과거 1년 이내 수령 여부) — 항상 노출
+  // =======================================================
+  {
+    id: 'deathInsuranceGroup',
+    type: 'composite',
+    title: '사망보험금 수령 여부',
+    subtitle: '과거 1년 이내에 사망보험금을 받으신 적이 있나요?',
+    fields: [
+      {
+        field: 'deathInsuranceReceived',
+        subType: 'select',
+        label: '과거 1년 이내 사망보험금 수령 여부',
+        options: [
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
+        ],
+        columns: 2,
+      },
+      {
+        field: 'deathInsuranceAmount',
+        subType: 'money',
+        label: '사망보험금 총 합계',
+        hint:
+          '과거 1년 이내 여러 건이 있다면 모두 합산해 입력하세요.\n' +
+          '예) 5,000만원 + 1억 수령 → 1억 5,000만원 입력.',
+        showIf: (a) => a.deathInsuranceReceived === 'yes',
+      },
+    ],
+    helpCard: {
+      title: '사망보험금이 왜 재산에 포함되나요?',
+      easy:
+        '과거 1년 이내 가족(피보험자) 사망으로 수령한 사망보험금은 회생 실무상 재산으로 평가됩니다.\n\n' +
+        '현재 보험에 가입하지 않으셨더라도 과거 1년 이내 수령 이력이 있다면 "예"를 선택하고 금액을 입력해주세요.',
+      cases: [
+        { q: '여러 건의 사망보험금을 받았어요', a: '여러 건을 모두 합산한 총액을 입력해주세요. 예: 5,000만원 + 1억 = 1억 5,000만원 입력.' },
+        { q: '1년 이전에 받은 건?', a: '자가진단은 과거 1년 이내 수령분만 대상으로 합니다. 1년 이전 수령분은 제외하세요.' },
+        { q: '보험을 현재 보유하지 않아도 입력해야 하나요?', a: '네, 현재 보험에 가입하지 않았더라도 과거 1년 이내 사망보험금 수령 이력이 있다면 입력해주세요.' },
+      ],
+      tip: '과거 1년 이내 수령 이력이 없다면 "아니오"만 선택하시면 됩니다.',
     },
   },
 
@@ -794,16 +879,29 @@ const questions = [
     fields: [
       {
         field: 'delinquencyStatus',
-        subType: 'select',
-        label: '현재 연체·압류 상황',
+        subType: 'multiSelect',
+        label: '현재 연체·압류 상황 (해당되는 것 모두 선택)',
+        hint: '정상 상환 중이면 한 가지만, 그 외는 중복 선택 가능합니다.',
         options: [
-          { value: '정상상환중', label: '정상 상환 중' },
-          { value: '연체중(1~3개월)', label: '연체 1~3개월' },
-          { value: '연체중(3개월이상)', label: '연체 3개월 이상' },
+          { value: '정상상환중', label: '정상 상환 중', exclusive: true },
+          { value: '연체중(1~3개월)', label: '연체 1~3개월', group: 'delinquencyPeriod' },
+          { value: '연체중(3개월이상)', label: '연체 3개월 이상', group: 'delinquencyPeriod' },
           { value: '추심독촉중', label: '추심·독촉 받는 중' },
           { value: '압류진행중', label: '압류 진행 중' },
         ],
         columns: 1,
+      },
+      {
+        field: 'seizureTypes',
+        subType: 'multiSelect',
+        label: '압류 유형 (해당되는 것 모두 선택)',
+        options: [
+          { value: 'salary', label: '급여 압류' },
+          { value: 'account', label: '통장 지급정지 압류' },
+          { value: 'provisional', label: '가압류 (부동산·임차보증금 등)' },
+        ],
+        columns: 1,
+        showIf: (a) => Array.isArray(a.delinquencyStatus) && a.delinquencyStatus.includes('압류진행중'),
       },
       {
         field: 'pastHistory',
@@ -818,6 +916,21 @@ const questions = [
           { value: '기각·폐지', label: '과거 기각·폐지' },
         ],
         columns: 1,
+      },
+      {
+        field: 'loanOriginPeriod',
+        subType: 'multiSelect',
+        label: '대출 발생 시점 (최대 2개 선택)',
+        hint: '주요 채무가 발생한 시점을 선택해주세요. 최대 2개까지 선택 가능합니다.',
+        options: [
+          { value: '1to6months', label: '1개월 ~ 6개월 사이' },
+          { value: '7to12months', label: '7개월 ~ 12개월 사이' },
+          { value: '1year_plus', label: '1년 이상' },
+          { value: '2year_plus', label: '2년 이상' },
+          { value: '3year_plus', label: '3년 이상' },
+        ],
+        columns: 1,
+        maxSelect: 2,
       },
     ],
   },

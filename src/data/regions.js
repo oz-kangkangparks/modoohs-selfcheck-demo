@@ -116,37 +116,92 @@ export function resolveCourt(sido, sigungu) {
 }
 
 /**
+ * 법원 이름에서 지역 접두어 추출 — 같은 관할(광역) 여부 판단용
+ * 예: "부산회생법원" → "부산", "창원지방법원" → "창원"
+ */
+function extractCourtCity(courtName) {
+  if (!courtName) return '';
+  return courtName.replace(/(회생|지방)법원$/, '');
+}
+
+/**
+ * 한 지역(시·도 + 시·군·구)에서 신청 가능한 법원 이름 리스트
+ *  - rehab과 district가 같은 관할 지역이면 rehab만 (예: 부산 = 부산회생/부산지법 → 부산회생만)
+ *  - 다른 관할이면 둘 다 (예: 김해 = 부산회생/창원지법 → 둘 다)
+ *  - 한쪽만 있으면 그것만
+ */
+function courtsOfOneBase(sido, sigungu) {
+  if (!sido || !sigungu) return [];
+  const c = resolveCourt(sido, sigungu);
+  const names = [];
+  if (c.rehab && c.district) {
+    const sameJurisdiction = extractCourtCity(c.rehab) === extractCourtCity(c.district);
+    names.push(c.rehab);
+    if (!sameJurisdiction) names.push(c.district);
+  } else if (c.rehab) {
+    names.push(c.rehab);
+  } else if (c.district) {
+    names.push(c.district);
+  }
+  return names;
+}
+
+/**
+ * 거주지·직장지를 모두 고려한 신청 가능 법원 리스트
+ *  - 거주지 법원 + 직장지 법원 합집합 (중복 제거)
+ *  - 정렬: 회생법원 먼저, 지방법원 뒤
+ */
+export function resolveAvailableCourts({ residenceSido, residenceSigungu, workSido, workSigungu } = {}) {
+  const residenceList = courtsOfOneBase(residenceSido, residenceSigungu);
+  const workList = courtsOfOneBase(workSido, workSigungu);
+  const combined = [...new Set([...residenceList, ...workList])];
+  combined.sort((a, b) => {
+    const aIsRehab = a.includes('회생');
+    const bIsRehab = b.includes('회생');
+    if (aIsRehab && !bIsRehab) return -1;
+    if (!aIsRehab && bIsRehab) return 1;
+    return 0;
+  });
+  return combined;
+}
+
+/**
  * 거주지·직장지 중 "회생법원" 관할인 곳을 우선 선택
  *  - 회생법원은 채무자에게 유리(24개월 단축 특례, 더 유연한 실무 처리 등)하므로
  *    둘 중 하나라도 회생법원 관할이면 그곳을 자동 선택한다.
  *  - 둘 다 회생법원이면 거주지 우선. 둘 다 지방법원이면 거주지 기준.
+ *  - 반환 객체에 `availableCourts` (신청 가능한 법원 전체 리스트) 포함
  *
  * @param {object} answers — residenceSido, residenceSigungu, workSido, workSigungu
- * @returns 기존 resolveCourt 리턴 + basedOn('residence'|'work')
+ * @returns 기존 resolveCourt 리턴 + basedOn('residence'|'work') + availableCourts: string[]
  */
 export function resolveBestCourt({ residenceSido, residenceSigungu, workSido, workSigungu } = {}) {
   const residenceCourt = resolveCourt(residenceSido, residenceSigungu);
   const residenceIsRehab = residenceCourt.recommended === 'rehab' && !!residenceCourt.rehab;
 
+  const availableCourts = resolveAvailableCourts({
+    residenceSido, residenceSigungu, workSido, workSigungu,
+  });
+
   // 거주지가 이미 회생법원이면 그대로 사용
   if (residenceIsRehab) {
-    return { ...residenceCourt, basedOn: 'residence' };
+    return { ...residenceCourt, basedOn: 'residence', availableCourts };
   }
 
   // 직장지가 입력되지 않았으면 거주지 그대로
   if (!workSido || !workSigungu) {
-    return { ...residenceCourt, basedOn: 'residence' };
+    return { ...residenceCourt, basedOn: 'residence', availableCourts };
   }
 
   // 직장지가 회생법원이면 직장지 기준
   const workCourt = resolveCourt(workSido, workSigungu);
   const workIsRehab = workCourt.recommended === 'rehab' && !!workCourt.rehab;
   if (workIsRehab) {
-    return { ...workCourt, basedOn: 'work' };
+    return { ...workCourt, basedOn: 'work', availableCourts };
   }
 
   // 둘 다 지방법원이면 거주지 기준
-  return { ...residenceCourt, basedOn: 'residence' };
+  return { ...residenceCourt, basedOn: 'residence', availableCourts };
 }
 
 // ============================================================

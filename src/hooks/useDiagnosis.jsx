@@ -71,6 +71,7 @@ export function prepareAnswersForCalculator(answers) {
     'vehicleValue',
     'vehicleLoan',
     'depositValue',
+    'savingsValue',
     'insuranceValue',
     'insurancePolicyLoan',
     'accountValue',
@@ -78,6 +79,8 @@ export function prepareAnswersForCalculator(answers) {
     'stocksValue',
     'cryptoValue',
     'retirementAmount',
+    // 사망보험금 — 과거 1년 이내 수령 합계
+    'deathInsuranceAmount',
     // 사업자회생 — 사업장 자산
     'businessRentDeposit',
     'businessMonthlyRent',

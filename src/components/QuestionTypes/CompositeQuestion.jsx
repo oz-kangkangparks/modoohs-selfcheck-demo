@@ -54,7 +54,9 @@ export default function CompositeQuestion({ question, allAnswers, onFieldChange 
               </p>
             )}
             {field.hint && (
-              <p style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 10 }}>{field.hint}</p>
+              <p style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 10, whiteSpace: 'pre-line' }}>
+                {typeof field.hint === 'function' ? field.hint(allAnswers || {}) : field.hint}
+              </p>
             )}
             <SubField
               field={field}
@@ -325,8 +327,23 @@ function SubMultiSelect({ field, value, onChange }) {
       const o = opts.find((x) => x.value === s);
       return !o?.exclusive;
     });
-    if (next.includes(v)) next = next.filter((s) => s !== v);
-    else next = [...next, v];
+    const wasSelected = next.includes(v);
+    if (wasSelected) {
+      next = next.filter((s) => s !== v);
+    } else {
+      // 동일 group 내 다른 항목은 서로 배타 (한 그룹 내 하나만 체크)
+      if (opt?.group) {
+        next = next.filter((s) => {
+          const o = opts.find((x) => x.value === s);
+          return o?.group !== opt.group;
+        });
+      }
+      // 최대 선택 제한 — maxSelect 도달 시 추가 차단
+      if (field.maxSelect && next.length >= field.maxSelect) {
+        return;
+      }
+      next = [...next, v];
+    }
     onChange(next);
   }
 

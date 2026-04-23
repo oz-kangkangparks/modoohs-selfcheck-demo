@@ -18,6 +18,13 @@ export default function MultiSelectQuestion({ question, value, onChange }) {
     if (next.includes(optValue)) {
       next = next.filter(v => v !== optValue);
     } else {
+      // 동일 group 내 다른 항목은 서로 배타 (한 그룹 내 하나만 체크)
+      if (opt?.group) {
+        next = next.filter(v => {
+          const o = options.find(x => x.value === v);
+          return o?.group !== opt.group;
+        });
+      }
       next = [...next, optValue];
     }
 

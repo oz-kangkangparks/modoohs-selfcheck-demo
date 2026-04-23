@@ -24,6 +24,18 @@ const VERDICT_STYLE = {
   [VERDICT.CONSULT]:    { color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b, #b45309)', label: '전문가 상담 필요' },
 };
 
+// 시·도 이름을 그대로 변제금 라벨로 사용할 광역자치단체 집합 (그 외 도 단위는 시·군·구 이름 사용)
+const SIDO_LEVEL_LABELS = new Set([
+  '서울특별시',
+  '부산광역시',
+  '대구광역시',
+  '인천광역시',
+  '광주광역시',
+  '대전광역시',
+  '울산광역시',
+  '세종특별자치시',
+]);
+
 
 export default function ResultPage() {
   const { id } = useParams();
@@ -121,7 +133,7 @@ export default function ResultPage() {
 
         {/* 예상 변제 계획 (3수치 + 자연어 문장을 한 카드에) */}
         {r.paymentPlan && r.verdict !== VERDICT.IMPOSSIBLE && (
-          <PaymentPlanCard result={r} />
+          <PaymentPlanCard result={r} answers={a} />
         )}
 
         {/* 내 재산 요약 — 단순 합계 (기술용어 제거) */}
@@ -267,10 +279,17 @@ function NoticesCard({ notices }) {
 // =========================================================================
 // 예상 변제 계획 (3수치 + 자연어 문장 병합)
 // =========================================================================
-function PaymentPlanCard({ result }) {
+function PaymentPlanCard({ result, answers }) {
   const p = result.paymentPlan;
   const creditDebt = result.creditDebt;
   const surplus = p.totalPayment > creditDebt; // 소득으로 충분히 상환 가능한 경우
+
+  // 계산 기준 정보 — 월 소득 / 부양가족 수 / 최저생계비
+  const monthlyIncomeWon = manwonToWon(Number(answers?.monthlyIncome) || 0);
+  const familyCountText = Number.isFinite(result.familyCount)
+    ? `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}인`
+    : '-';
+  const livingExpenseWon = Number(result.livingExpense) || 0;
 
   // 구버전 저장 데이터 방어 — repaymentRate/exemptionRate 없으면 즉석 계산
   const repaymentRate = Number.isFinite(p.repaymentRate)
@@ -315,6 +334,38 @@ function PaymentPlanCard({ result }) {
   return (
     <div className="card">
       <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>예상 변제 계획</div>
+
+      {/* 계산 기준 — 월 소득 / 부양가족 수 / 최저생계비 */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 10,
+          marginBottom: 12,
+          padding: '10px 12px',
+          background: 'var(--c-bg)',
+          borderRadius: 10,
+          fontSize: 13,
+          color: 'var(--c-text-sub)',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ flex: '1 1 0', minWidth: 110, textAlign: 'left' }}>
+          <span style={{ color: 'var(--c-text-muted)', fontWeight: 600, marginRight: 6 }}>월 소득</span>
+          <strong style={{ color: 'var(--c-text-primary)', fontWeight: 700 }}>
+            {formatKoreanMoney(monthlyIncomeWon)}
+          </strong>
+        </div>
+        <div style={{ flex: '1 1 0', minWidth: 110, textAlign: 'center' }}>
+          <span style={{ color: 'var(--c-text-muted)', fontWeight: 600, marginRight: 6 }}>부양가족 수</span>
+          <strong style={{ color: 'var(--c-text-primary)', fontWeight: 700 }}>{familyCountText}</strong>
+        </div>
+        <div style={{ flex: '1 1 0', minWidth: 110, textAlign: 'right' }}>
+          <span style={{ color: 'var(--c-text-muted)', fontWeight: 600, marginRight: 6 }}>최저생계비</span>
+          <strong style={{ color: 'var(--c-text-primary)', fontWeight: 700 }}>
+            {formatKoreanMoney(livingExpenseWon)}
+          </strong>
+        </div>
+      </div>
 
       <div className="metric-row metric-row--primary">
         <MetricCard label="월 변제금" value={formatKoreanMoney(p.monthlyPayment)} color="var(--c-primary)" />
@@ -410,16 +461,27 @@ function MiniScenario({ label, result, highlight }) {
 // =========================================================================
 function MyAssetsCard({ result, answers }) {
   const L = result.liquidation;
+  // 레거시 저장 데이터(deposit·savings·insurance 분리 이전) 호환 — 신규 필드 없으면 합계 필드로 단일 행 표시
+  const hasSplit = L.deposit !== undefined || L.savings !== undefined || L.insurance !== undefined;
+  const depositInsuranceRows = hasSplit
+    ? [
+        { label: '예금', v: L.deposit || 0 },
+        { label: '적금', v: L.savings || 0 },
+        { label: '보험', v: L.insurance || 0 },
+      ]
+    : [{ label: '예금·보험', v: L.depositInsurance || 0 }];
+
   const rows = [
     { label: '자가 부동산', v: L.realEstate },
     { label: '차량', v: L.vehicle },
-    { label: '예금·보험', v: L.depositInsurance },
+    ...depositInsuranceRows,
     { label: '청약', v: L.account },
     { label: '주식', v: L.stocks },
     { label: '코인', v: L.crypto },
     { label: '퇴직금', v: L.retirement },
     { label: '전세 보증금', v: L.jeonse },
     { label: '월세 보증금', v: L.housingDeposit || 0 },
+    { label: '사망보험금 (1,500만 공제 후)', v: L.deathInsurance || 0 },
     { label: '사업장 임차보증금', v: L.businessRentDeposit || 0 },
     { label: '영업비품 (환가 예상)', v: L.businessEquipment || 0 },
   ].filter((r) => r.v > 0);
@@ -463,11 +525,12 @@ function AssetsDetailAccordion({ answers: a, result }) {
   // 면제재산 (거주지 기준)
   const exemptionWon = resolveJeonseExemption(a.residenceSido, a.residenceSigungu);
   const exemptionText = formatKoreanMoney(exemptionWon);
-  // "양산시 변제금" / "서울특별시 변제금" 형태로 거주지 이름 prefix
-  const exemptionLabel =
-    a.residenceSido === '서울특별시'
-      ? `${a.residenceSido} 변제금`
-      : (a.residenceSigungu ? `${a.residenceSigungu} 변제금` : '최우선 변제금');
+  // 라벨 규칙:
+  //  - 특별시·광역시·특별자치시 → 시·도 이름 (예: "부산광역시 변제금")
+  //  - 도 단위 (경기도·강원·충청·전라·경상·제주) → 시·군·구 이름 (예: "양산시 변제금")
+  const exemptionLabel = SIDO_LEVEL_LABELS.has(a.residenceSido)
+    ? `${a.residenceSido} 변제금`
+    : (a.residenceSigungu ? `${a.residenceSigungu} 변제금` : '최우선 변제금');
 
   const blocks = [];
 
@@ -497,32 +560,75 @@ function AssetsDetailAccordion({ answers: a, result }) {
   if (assets.includes('vehicle') && (Number(a.vehicleValue) || 0) > 0) {
     const valW = manwonToWon(Number(a.vehicleValue) || 0);
     const loanW = manwonToWon(Number(a.vehicleLoan) || 0);
-    const raw = valW - loanW;
-    const lines = [
-      `차량 시세 ${formatKoreanMoney(valW)} − 차량 담보대출 ${formatKoreanMoney(loanW)} = ${formatKoreanMoney(L.vehicle)}${raw < 0 ? ' (음수는 0 처리)' : ''}`,
-    ];
+    const isOverLoan = loanW > valW;
+    const lines = [];
+
+    if (isOverLoan && a.vehicleAuction === 'yes') {
+      const halfW = valW * 0.5;
+      const deficitW = loanW - halfW; // 음수분의 절대값
+      lines.push(`담보대출(${formatKoreanMoney(loanW)})이 시세(${formatKoreanMoney(valW)})보다 큼 → 공매 처분 선택`);
+      lines.push(`차량 시세 ${formatKoreanMoney(valW)} × 0.5 − 담보대출 ${formatKoreanMoney(loanW)} = −${formatKoreanMoney(deficitW)}`);
+      lines.push(`음수분 ${formatKoreanMoney(deficitW)}은 신용채무로 편입 (내 채무 내역 참조)`);
+      lines.push(`차량 재산가치: 0원 (공매 처분)`);
+    } else if (isOverLoan && a.vehicleAuction === 'no') {
+      lines.push(`담보대출(${formatKoreanMoney(loanW)})이 시세(${formatKoreanMoney(valW)})보다 큼 → 별제권 유지 선택`);
+      lines.push(`회생절차와 무관하게 개별 변제 (차량 유지)`);
+      lines.push(`차량 재산가치: 0원`);
+    } else {
+      const raw = valW - loanW;
+      lines.push(`차량 시세 ${formatKoreanMoney(valW)} − 차량 담보대출 ${formatKoreanMoney(loanW)} = ${formatKoreanMoney(L.vehicle)}${raw < 0 ? ' (음수는 0 처리)' : ''}`);
+    }
     blocks.push({ title: '차량', value: L.vehicle, lines });
   }
 
-  // 3. 예금·보험
-  const hasDeposit = assets.includes('deposit') && (Number(a.depositValue) || 0) > 0;
-  const hasInsurance = assets.includes('insurance');
-  if (hasDeposit || hasInsurance) {
-    const depW = hasDeposit ? manwonToWon(Number(a.depositValue) || 0) : 0;
+  // 3-a. 예금 — 250만 공제 개별 적용
+  if (assets.includes('deposit') && (Number(a.depositValue) || 0) > 0) {
+    const depW = manwonToWon(Number(a.depositValue) || 0);
+    const finalW = L.deposit !== undefined ? L.deposit : Math.max(0, depW - 2_500_000);
+    blocks.push({
+      title: '예금',
+      value: finalW,
+      lines: [
+        `예금 잔액 ${formatKoreanMoney(depW)} − 압류금지 공제 250만원 = ${formatKoreanMoney(finalW)}${depW - 2_500_000 < 0 ? ' (음수는 0 처리)' : ''}`,
+      ],
+    });
+  }
+
+  // 3-b'. 적금 — 공제 없이 전액
+  if (assets.includes('savings') && (Number(a.savingsValue) || 0) > 0) {
+    const savW = manwonToWon(Number(a.savingsValue) || 0);
+    const finalW = L.savings !== undefined ? L.savings : savW;
+    blocks.push({
+      title: '적금',
+      value: finalW,
+      lines: [`적금 잔액 ${formatKoreanMoney(savW)} 전액 반영 (압류금지 공제 없음)`],
+    });
+  }
+
+  // 3-b. 보험 — 약관대출 차감 후 250만 공제 개별 적용
+  if (assets.includes('insurance')) {
     const insKnown = a.insuranceKnown === 'yes';
-    const insGrossW = hasInsurance && insKnown ? manwonToWon(Number(a.insuranceValue) || 0) : 0;
-    const insLoanW = hasInsurance && insKnown ? manwonToWon(Number(a.insurancePolicyLoan) || 0) : 0;
+    const insGrossW = insKnown ? manwonToWon(Number(a.insuranceValue) || 0) : 0;
+    const insLoanW = insKnown ? manwonToWon(Number(a.insurancePolicyLoan) || 0) : 0;
     const insNetW = Math.max(0, insGrossW - insLoanW);
-    const sumW = depW + insNetW;
+    const finalW = L.insurance !== undefined ? L.insurance : Math.max(0, insNetW - 2_500_000);
     const lines = [];
-    if (depW > 0) lines.push(`예금·적금 합계: ${formatKoreanMoney(depW)}`);
-    if (hasInsurance && insKnown) {
+    if (insKnown) {
       lines.push(`보험 해약환급금 ${formatKoreanMoney(insGrossW)} − 약관대출 ${formatKoreanMoney(insLoanW)} = ${formatKoreanMoney(insNetW)}`);
-    } else if (hasInsurance && !insKnown) {
+      lines.push(`${formatKoreanMoney(insNetW)} − 압류금지 공제 250만원 = ${formatKoreanMoney(finalW)}${insNetW - 2_500_000 < 0 ? ' (음수는 0 처리)' : ''}`);
+    } else {
       lines.push('보험 해약환급금: 모름 → 0원 처리');
     }
-    lines.push(`합산 ${formatKoreanMoney(sumW)} − 압류금지 공제 250만원 = ${formatKoreanMoney(L.depositInsurance)}${sumW - 2_500_000 < 0 ? ' (음수는 0 처리)' : ''}`);
-    blocks.push({ title: '예금·보험', value: L.depositInsurance, lines });
+    // 보험은 '모름'이라도 계산 블록 노출 여부 결정: 사용자가 보험을 재산으로 선택했으면 표시
+    if (insKnown && insGrossW === 0 && finalW === 0) {
+      // 금액 0이면 skip
+    } else {
+      blocks.push({
+        title: '보험',
+        value: finalW,
+        lines,
+      });
+    }
   }
 
   // 4. 청약
@@ -594,6 +700,19 @@ function AssetsDetailAccordion({ answers: a, result }) {
       lines.push(`전세금 ${formatKoreanMoney(amtW)} − ${exemptionLabel} ${exemptionText} = ${formatKoreanMoney(L.jeonse)}${amtW - exemptionWon < 0 ? ' (음수는 0 처리)' : ''}`);
     }
     blocks.push({ title: '전세 보증금', value: L.jeonse, lines });
+  }
+
+  // 8-B. 사망보험금 (과거 1년 이내 수령)
+  if (a.deathInsuranceReceived === 'yes' && (Number(a.deathInsuranceAmount) || 0) > 0) {
+    const rcvW = manwonToWon(Number(a.deathInsuranceAmount) || 0);
+    const finalW = L.deathInsurance !== undefined ? L.deathInsurance : Math.max(0, rcvW - 15_000_000);
+    blocks.push({
+      title: '사망보험금 (과거 1년 이내 수령)',
+      value: finalW,
+      lines: [
+        `수령 총 합계 ${formatKoreanMoney(rcvW)} − 공제 1,500만원 = ${formatKoreanMoney(finalW)}${rcvW - 15_000_000 < 0 ? ' (음수는 0 처리)' : ''}`,
+      ],
+    });
   }
 
   // 9. 월세 보증금
@@ -680,16 +799,34 @@ function MyDebtCard({ result, answers }) {
 // =========================================================================
 function DebtDetailAccordion({ answers: a, result }) {
   const inputDebtW = manwonToWon(Number(a.totalCreditDebt) || 0);
-  const added = result.creditDebt - inputDebtW;
-
   const lines = [`입력 신용채무 (담보대출 제외): ${formatKoreanMoney(inputDebtW)}`];
 
-  if (added > 0) {
-    const note = a.jeonseLien === 'unknown'
-      ? '질권설정 "모름" — 주표시는 "질권설정 없음" 시나리오로 가정되어 신용채권에 편입'
-      : '전세대출 질권설정 없음 → 신용채권에 편입';
-    lines.push(`+ 전세대출 원금: ${formatKoreanMoney(added)}`);
-    lines.push(`  ※ ${note}`);
+  // 차량 공매 잔존 채무 편입
+  if ((a.otherAssets || []).includes('vehicle') && a.vehicleAuction === 'yes') {
+    const valW = manwonToWon(Number(a.vehicleValue) || 0);
+    const loanW = manwonToWon(Number(a.vehicleLoan) || 0);
+    if (valW > 0 && loanW > valW) {
+      const deficitW = loanW - (valW * 0.5);
+      lines.push(`+ 차량 공매 잔존 채무: ${formatKoreanMoney(deficitW)}`);
+      lines.push(`  ※ 차량 시세 ${formatKoreanMoney(valW)} × 0.5 − 담보대출 ${formatKoreanMoney(loanW)}의 음수분 편입`);
+    }
+  }
+
+  // 전세대출 질권설정 없음 시 편입 (주표시 시나리오 기준)
+  const primaryLien = result.hasAlternate ? 'no' : a.jeonseLien;
+  if (
+    a.housingType === '전세' &&
+    a.jeonseHasLoan === 'yes' &&
+    primaryLien === 'no'
+  ) {
+    const jeonseLoanW = manwonToWon(Number(a.jeonseLoanAmount) || 0);
+    if (jeonseLoanW > 0) {
+      const note = a.jeonseLien === 'unknown'
+        ? '질권설정 "모름" — 주표시는 "질권설정 없음" 시나리오로 가정되어 신용채권에 편입'
+        : '전세대출 질권설정 없음 → 신용채권에 편입';
+      lines.push(`+ 전세대출 원금: ${formatKoreanMoney(jeonseLoanW)}`);
+      lines.push(`  ※ ${note}`);
+    }
   }
 
   return (
@@ -740,7 +877,7 @@ function InputSummaryCards({ answers, result, onEdit }) {
       rows: [
         ['거주지', a.residenceSido ? `${a.residenceSido} ${a.residenceSigungu || ''}` : '-'],
         ['직장지', a.workSido ? `${a.workSido} ${a.workSigungu || ''}` : '거주지와 동일'],
-        ['예상 관할 법원', result.court?.courtName || '-'],
+        ['예상 관할 법원', formatCourtList(result.court)],
       ],
     },
     {
@@ -749,7 +886,13 @@ function InputSummaryCards({ answers, result, onEdit }) {
       rows: [
         ['결혼 상태', A('maritalStatus')],
         ...(a.maritalStatus === '기혼' ? [['배우자 소득', a.spouseIncome === 'yes' ? '있음' : a.spouseIncome === 'no' ? '없음' : '-']] : []),
-        ['미성년 자녀', `${a.minorChildren || 0}명`],
+        ['미성년 자녀', (() => {
+          const n = Number(a.minorChildren) || 0;
+          if (n === 0) return '0명';
+          const isCoShared = a.maritalStatus === '기혼' && a.spouseIncome === 'yes';
+          const effective = isCoShared ? n * 0.5 : n;
+          return `${Number(effective).toFixed(1).replace(/\.0$/, '')}명`;
+        })()],
         // 이혼 + 자녀 → 양육비 지급 여부·금액
         ...(a.maritalStatus === '이혼' && (Number(a.minorChildren) || 0) > 0
           ? [
@@ -771,6 +914,9 @@ function InputSummaryCards({ answers, result, onEdit }) {
             ]
           : []),
         ['부양 부모', `${a.dependentParents || 0}명`],
+        ...(result.familyCount !== undefined
+          ? [['부양가족 수 (본인 포함, 산정 결과)', `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}인`]]
+          : []),
       ],
     },
     {
@@ -836,28 +982,96 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ['영업비품 환가 예상액', money('businessEquipmentValue')],
       ],
     }] : []),
-    ...(Array.isArray(a.otherAssets) && a.otherAssets.length > 0 && !a.otherAssets.includes('none')
-      ? [{
-          title: '그 외 재산',
-          editId: 'otherAssets',
-          rows: [
-            ['선택 항목', a.otherAssets.map(mapAssetLabel).join(', ')],
-            ...(a.otherAssets.includes('vehicle') ? [['차량 시세', money('vehicleValue')], ['차량 담보대출', money('vehicleLoan')]] : []),
-            ...(a.otherAssets.includes('deposit') ? [['예금·적금', money('depositValue')]] : []),
-            ...(a.otherAssets.includes('insurance') ? [
-              ['보험 해약환급금', a.insuranceKnown === 'no' ? '모름' : money('insuranceValue')],
-              ...(a.insuranceKnown === 'yes' ? [['보험 약관대출', money('insurancePolicyLoan')]] : []),
-            ] : []),
-            ...(a.otherAssets.includes('account') ? [['청약', money('accountValue')]] : []),
-            ...(a.otherAssets.includes('stocks') ? [['주식', money('stocksValue')]] : []),
-            ...(a.otherAssets.includes('crypto') ? [['코인', money('cryptoValue')]] : []),
-            ...(a.otherAssets.includes('retirement') ? [
-              ['퇴직금 유형', mapRetirementType(a.retirementType)],
-              ...(a.retirementType === 'severance' ? [['예상 퇴직금', money('retirementAmount')]] : []),
-            ] : []),
-          ],
-        }]
-      : []),
+    ...((() => {
+      const otherAssets = Array.isArray(a.otherAssets) ? a.otherAssets : [];
+      const hasOtherAssets = otherAssets.length > 0 && !otherAssets.includes('none');
+      const hasDeathInsurance =
+        a.deathInsuranceReceived === 'yes' && (Number(a.deathInsuranceAmount) || 0) > 0;
+      if (!hasOtherAssets && !hasDeathInsurance) return [];
+
+      const deathInsuranceValue = result.liquidation?.deathInsurance ?? 0;
+
+      // 그 외 재산 표시값 합계 (원 단위)
+      let sumWon = 0;
+      if (hasOtherAssets) {
+        if (otherAssets.includes('vehicle')) {
+          const val = Number(a.vehicleValue) || 0;
+          const loan = Number(a.vehicleLoan) || 0;
+          const isOverLoan = val > 0 && loan > val;
+          if (!isOverLoan) sumWon += manwonToWon(Math.max(0, val - loan));
+          // 담보대출 > 시세 (공매/별제권) → 0원 기여
+        }
+        if (otherAssets.includes('deposit')) sumWon += manwonToWon(Number(a.depositValue) || 0);
+        if (otherAssets.includes('savings')) sumWon += manwonToWon(Number(a.savingsValue) || 0);
+        if (otherAssets.includes('insurance') && a.insuranceKnown !== 'no') {
+          const gross = Number(a.insuranceValue) || 0;
+          const loanIns = Number(a.insurancePolicyLoan) || 0;
+          sumWon += manwonToWon(Math.max(0, gross - loanIns));
+        }
+        if (otherAssets.includes('account')) sumWon += manwonToWon(Number(a.accountValue) || 0);
+        if (otherAssets.includes('stocks')) sumWon += manwonToWon(Number(a.stocksValue) || 0);
+        if (otherAssets.includes('crypto')) sumWon += manwonToWon(Number(a.cryptoValue) || 0);
+        if (otherAssets.includes('retirement') && a.retirementType === 'severance') {
+          sumWon += manwonToWon(Number(a.retirementAmount) || 0);
+        }
+      }
+      if (hasDeathInsurance) sumWon += deathInsuranceValue;
+
+      return [{
+        title: '그 외 재산',
+        editId: 'otherAssets',
+        rows: [
+          ...(hasOtherAssets
+            ? [
+                ['선택 항목', otherAssets.map(mapAssetLabel).join(', ')],
+                ...(otherAssets.includes('vehicle')
+                  ? (() => {
+                      const val = Number(a.vehicleValue) || 0;
+                      const loan = Number(a.vehicleLoan) || 0;
+                      const isOverLoan = val > 0 && loan > val;
+                      if (isOverLoan && a.vehicleAuction === 'yes') {
+                        return [['차량', '0원 (공매 처분 — 잔존 채무는 신용채무로 편입)']];
+                      }
+                      if (isOverLoan && a.vehicleAuction === 'no') {
+                        return [['차량', '0원 (별제권 유지 — 개별 변제)']];
+                      }
+                      return [[
+                        '차량',
+                        formatKoreanMoney(Math.max(0, manwonToWon(val - loan))),
+                      ]];
+                    })()
+                  : []),
+                ...(otherAssets.includes('deposit') ? [['예금', money('depositValue')]] : []),
+                ...(otherAssets.includes('savings') ? [['적금', money('savingsValue')]] : []),
+                ...(otherAssets.includes('insurance')
+                  ? [[
+                      '보험',
+                      a.insuranceKnown === 'no'
+                        ? '모름'
+                        : formatKoreanMoney(
+                            Math.max(
+                              0,
+                              manwonToWon((Number(a.insuranceValue) || 0) - (Number(a.insurancePolicyLoan) || 0)),
+                            ),
+                          ),
+                    ]]
+                  : []),
+                ...(otherAssets.includes('account') ? [['청약', money('accountValue')]] : []),
+                ...(otherAssets.includes('stocks') ? [['주식', money('stocksValue')]] : []),
+                ...(otherAssets.includes('crypto') ? [['코인', money('cryptoValue')]] : []),
+                ...(otherAssets.includes('retirement')
+                  ? [
+                      ['퇴직금 유형', mapRetirementType(a.retirementType)],
+                      ...(a.retirementType === 'severance' ? [['예상 퇴직금', money('retirementAmount')]] : []),
+                    ]
+                  : []),
+              ]
+            : []),
+          ...(hasDeathInsurance ? [['사망보험금', formatKoreanMoney(deathInsuranceValue)]] : []),
+          ['합계', formatKoreanMoney(sumWon)],
+        ],
+      }];
+    })()),
     {
       title: '신용 채무',
       editId: 'totalCreditDebt',
@@ -894,8 +1108,14 @@ function InputSummaryCards({ answers, result, onEdit }) {
       title: '연체·과거 이력',
       editId: 'statusHistoryGroup',
       rows: [
-        ['현재 연체·압류', A('delinquencyStatus')],
+        ['현재 연체·압류', formatCodeList(a.delinquencyStatus, DELINQUENCY_LABELS)],
+        ...(Array.isArray(a.delinquencyStatus) && a.delinquencyStatus.includes('압류진행중')
+          ? [['압류 유형', formatCodeList(a.seizureTypes, SEIZURE_LABELS)]]
+          : []),
         ['과거 회생·파산 이력', A('pastHistory')],
+        ...(Array.isArray(a.loanOriginPeriod) && a.loanOriginPeriod.length > 0
+          ? [['대출 발생 시점', formatCodeList(a.loanOriginPeriod, LOAN_PERIOD_LABELS)]]
+          : []),
       ],
     },
   ];
@@ -913,12 +1133,15 @@ function InputSummaryCards({ answers, result, onEdit }) {
             <div className="summary-section__title">{sec.title}</div>
             <button className="edit-pill" onClick={() => onEdit(sec.editId)}>수정</button>
           </div>
-          {sec.rows.map(([label, value]) => (
-            <div key={label} className="summary-row">
-              <div className="summary-row__label">{label}</div>
-              <div className="summary-row__value">{value}</div>
-            </div>
-          ))}
+          {sec.rows.map(([label, value]) => {
+            const isTotal = label === '합계';
+            return (
+              <div key={label} className={`summary-row${isTotal ? ' summary-row--total' : ''}`}>
+                <div className="summary-row__label">{label}</div>
+                <div className="summary-row__value">{value}</div>
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>
@@ -926,7 +1149,7 @@ function InputSummaryCards({ answers, result, onEdit }) {
 }
 
 function mapAssetLabel(code) {
-  const m = { vehicle: '차량', deposit: '예금·적금', insurance: '보험', account: '청약', stocks: '주식', crypto: '코인', retirement: '퇴직금', none: '없음' };
+  const m = { vehicle: '차량', deposit: '예금', savings: '적금', insurance: '보험', account: '청약', stocks: '주식', crypto: '코인', retirement: '퇴직금', none: '없음' };
   return m[code] || code;
 }
 
@@ -940,6 +1163,28 @@ function mapRetirementType(code) {
   };
   return m[code] || '-';
 }
+
+const DELINQUENCY_LABELS = {
+  '정상상환중': '정상 상환 중',
+  '연체중(1~3개월)': '연체 1~3개월',
+  '연체중(3개월이상)': '연체 3개월 이상',
+  '추심독촉중': '추심·독촉 받는 중',
+  '압류진행중': '압류 진행 중',
+};
+
+const SEIZURE_LABELS = {
+  salary: '급여 압류',
+  account: '통장 지급정지 압류',
+  provisional: '가압류 (부동산·임차보증금 등)',
+};
+
+const LOAN_PERIOD_LABELS = {
+  '1to6months': '1개월 ~ 6개월 사이',
+  '7to12months': '7개월 ~ 12개월 사이',
+  '1year_plus': '1년 이상',
+  '2year_plus': '2년 이상',
+  '3year_plus': '3년 이상',
+};
 
 const DEBT_CAUSE_LABELS = {
   living: '생활비',
@@ -973,6 +1218,20 @@ function formatCodeList(values, labels) {
   if (!Array.isArray(values) || values.length === 0) return '-';
   // 각 항목을 별도 줄로 표시 — summary-row__value CSS의 pre-line과 조합되어 줄바꿈 렌더
   return values.map((v) => labels[v] || v).join('\n');
+}
+
+function formatCourtList(court) {
+  if (!court) return '-';
+  // 신규: 거주지·직장지 모두 고려한 전체 리스트 (회생법원 먼저 정렬)
+  if (Array.isArray(court.availableCourts) && court.availableCourts.length > 0) {
+    return court.availableCourts.join('\n');
+  }
+  // 레거시 호환 — availableCourts 필드가 없는 구버전 저장 데이터
+  const names = [];
+  if (court.rehab) names.push(court.rehab);
+  if (court.district) names.push(court.district);
+  if (names.length === 0) return court.courtName || '-';
+  return names.join('\n');
 }
 
 function mapBusinessOfficeType(code) {
@@ -1210,6 +1469,29 @@ const LOCAL_CSS = `
   font-size: 13px; font-weight: 600; color: var(--c-text-primary);
   word-break: keep-all; text-align: right;
   white-space: pre-line;
+}
+
+/* 합계 행 — 강조 표시 */
+.summary-row--total {
+  border-top: 2px solid var(--c-primary);
+  border-bottom: none;
+  padding-top: 12px;
+  margin-top: 6px;
+  background: var(--c-point-bg);
+  border-radius: 8px;
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-bottom: 12px;
+}
+.summary-row--total .summary-row__label {
+  color: var(--c-primary);
+  font-weight: 800;
+  font-size: 14px;
+}
+.summary-row--total .summary-row__value {
+  color: var(--c-primary);
+  font-weight: 800;
+  font-size: 15px;
 }
 
 .edit-pill {

@@ -35,6 +35,9 @@ export const LIVING_EXPENSE_TABLE = {
 /** 압류금지채권 공제 한도 (원) — 민사집행법 제246조 / 섹션 3-6 */
 export const DEPOSIT_INSURANCE_EXEMPT = 2_500_000;
 
+/** 사망보험금 공제 한도 (원) — 1,500만원 공제 후 잔액이 재산으로 편입 */
+export const DEATH_INSURANCE_EXEMPT = 15_000_000;
+
 /** 부동산 법원 환산 배율 — 섹션 3-1 */
 export const REAL_ESTATE_MULTIPLIER = 0.7;
 
@@ -215,16 +218,72 @@ export function calcRealEstateAsset({
   }
 }
 
-/** 차량 청산가치 — 시세 − 담보대출, 음수면 0 (감산 불가) */
-export function calcVehicleAsset({ vehicleValue = 0, vehicleLoan = 0 }) {
-  return Math.max(0, (Number(vehicleValue) || 0) - (Number(vehicleLoan) || 0));
+/**
+ * 차량 청산가치
+ *  - 기본: max(0, 시세 − 담보대출)
+ *  - 담보대출 > 시세 + 공매 처분 선택('yes') → 자산 0 (차량 매각)
+ *  - 담보대출 > 시세 + 별제권 유지('no') → 자산 0 (차량 유지)
+ */
+export function calcVehicleAsset({ vehicleValue = 0, vehicleLoan = 0, vehicleAuction } = {}) {
+  const val = Number(vehicleValue) || 0;
+  const loan = Number(vehicleLoan) || 0;
+  // 담보대출이 시세 초과 시 — 공매/별제권 무관하게 자산 0
+  if (val > 0 && loan > val) {
+    void vehicleAuction;
+    return 0;
+  }
+  return Math.max(0, val - loan);
 }
 
 /**
- * 예금·보험 합산 재산 (압류금지 250만 공제) — 섹션 3-6
- *   ① 보험 순자산 = max(0, 환급금 − 약관대출)
- *   ② 합계 = 예금 + 보험순자산
- *   ③ 재산인정액 = max(0, 합계 − 250만)
+ * 차량 공매 처분 시 신용채무에 가산되는 잔존 채무
+ *   deficit = 차량 시세 × 0.5 − 담보대출
+ *   음수분의 절대값이 신용채권에 편입됨
+ *   별제권 유지('no') 또는 담보대출 ≤ 시세인 경우 0
+ */
+export function calcVehicleAuctionDeficit({ vehicleValue = 0, vehicleLoan = 0, vehicleAuction } = {}) {
+  const val = Number(vehicleValue) || 0;
+  const loan = Number(vehicleLoan) || 0;
+  if (!(val > 0 && loan > val)) return 0;
+  if (vehicleAuction !== 'yes') return 0;
+  const deficit = (val * 0.5) - loan;
+  return Math.max(0, -deficit);
+}
+
+/**
+ * 예금 재산 인정액 — 압류금지 250만 공제 (개별 적용)
+ *   재산인정액 = max(0, 예금잔액 − 250만)
+ */
+export function calcDepositAsset({ depositValue = 0 }) {
+  const deposit = Number(depositValue) || 0;
+  return Math.max(0, deposit - DEPOSIT_INSURANCE_EXEMPT);
+}
+
+/**
+ * 적금 재산 인정액 — 공제 없이 전액 반영 (청약과 동일 성격)
+ */
+export function calcSavingsAsset({ savingsValue = 0 }) {
+  return Math.max(0, Number(savingsValue) || 0);
+}
+
+/**
+ * 보험 재산 인정액 — 약관대출 차감 후 압류금지 250만 공제 (개별 적용)
+ *   ① 순자산 = max(0, 환급금 − 약관대출)
+ *   ② 재산인정액 = max(0, 순자산 − 250만)
+ */
+export function calcInsuranceAsset({
+  insuranceValue = 0,
+  insurancePolicyLoan = 0,
+  insuranceKnown = 'yes',
+}) {
+  const gross = insuranceKnown === 'no' ? 0 : (Number(insuranceValue) || 0);
+  const net = Math.max(0, gross - (Number(insurancePolicyLoan) || 0));
+  return Math.max(0, net - DEPOSIT_INSURANCE_EXEMPT);
+}
+
+/**
+ * (레거시) 예금·보험 합산 재산 — 기존 합산 공제 버전. 구버전 저장 데이터 호환용.
+ * 신규 계산은 calcDepositAsset + calcInsuranceAsset 분리 사용.
  */
 export function calcDepositInsuranceAsset({
   depositValue = 0,
@@ -232,16 +291,25 @@ export function calcDepositInsuranceAsset({
   insurancePolicyLoan = 0,
   insuranceKnown = 'yes',
 }) {
-  const deposit = Number(depositValue) || 0;
-  const insuranceGross = insuranceKnown === 'no' ? 0 : (Number(insuranceValue) || 0);
-  const insuranceNet = Math.max(0, insuranceGross - (Number(insurancePolicyLoan) || 0));
-  const sum = deposit + insuranceNet;
-  return Math.max(0, sum - DEPOSIT_INSURANCE_EXEMPT);
+  return (
+    calcDepositAsset({ depositValue }) +
+    calcInsuranceAsset({ insuranceValue, insurancePolicyLoan, insuranceKnown })
+  );
 }
 
 /** 청약 순자산 — 환급금 − 청약담보대출 (250만 공제 대상 아님) */
 export function calcAccountAsset({ accountValue = 0, accountCollateralLoan = 0 }) {
   return Math.max(0, (Number(accountValue) || 0) - (Number(accountCollateralLoan) || 0));
+}
+
+/**
+ * 사망보험금 재산가치 — 과거 1년 이내 수령 총액에서 1,500만 공제
+ *   재산인정액 = max(0, 수령 합계 − 15,000,000)
+ */
+export function calcDeathInsuranceAsset({ deathInsuranceReceived, deathInsuranceAmount = 0 }) {
+  if (deathInsuranceReceived !== 'yes') return 0;
+  const amount = Number(deathInsuranceAmount) || 0;
+  return Math.max(0, amount - DEATH_INSURANCE_EXEMPT);
 }
 
 /** 퇴직금 재산가치 (회사지급 퇴직금만 × 0.5, 연금·IRP는 0) */
@@ -344,18 +412,30 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
       })
     : 0;
 
-  // 차량
+  // 차량 (공매 처분 여부 반영)
   const vehicle = assets.includes('vehicle')
-    ? calcVehicleAsset({ vehicleValue: answers.vehicleValue, vehicleLoan: answers.vehicleLoan })
+    ? calcVehicleAsset({
+        vehicleValue: answers.vehicleValue,
+        vehicleLoan: answers.vehicleLoan,
+        vehicleAuction: answers.vehicleAuction,
+      })
     : 0;
 
-  // 예금·보험 (250만 합계 공제)
-  const depositInsurance = calcDepositInsuranceAsset({
-    depositValue: assets.includes('deposit') ? answers.depositValue : 0,
-    insuranceValue: assets.includes('insurance') ? answers.insuranceValue : 0,
-    insurancePolicyLoan: assets.includes('insurance') ? answers.insurancePolicyLoan : 0,
-    insuranceKnown: answers.insuranceKnown || 'yes',
-  });
+  // 예금·적금·보험 — 예금과 보험만 각 250만 공제, 적금은 공제 없이 전액
+  const deposit = assets.includes('deposit')
+    ? calcDepositAsset({ depositValue: answers.depositValue })
+    : 0;
+  const savings = assets.includes('savings')
+    ? calcSavingsAsset({ savingsValue: answers.savingsValue })
+    : 0;
+  const insurance = assets.includes('insurance')
+    ? calcInsuranceAsset({
+        insuranceValue: answers.insuranceValue,
+        insurancePolicyLoan: answers.insurancePolicyLoan,
+        insuranceKnown: answers.insuranceKnown || 'yes',
+      })
+    : 0;
+  const depositInsurance = deposit + insurance; // 레거시 합계 호환
 
   // 청약
   const account = assets.includes('account')
@@ -403,20 +483,30 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
     residenceSigungu: answers.residenceSigungu,
   });
 
+  // 사망보험금 — 과거 1년 이내 수령 합계에서 1,500만 공제
+  const deathInsurance = calcDeathInsuranceAsset({
+    deathInsuranceReceived: answers.deathInsuranceReceived,
+    deathInsuranceAmount: answers.deathInsuranceAmount,
+  });
+
   const total =
-    realEstate + vehicle + depositInsurance + account + stocks + crypto + retirement +
-    jeonse + business.total + housingDeposit;
+    realEstate + vehicle + deposit + savings + insurance + account + stocks + crypto + retirement +
+    jeonse + business.total + housingDeposit + deathInsurance;
 
   return {
     realEstate,
     vehicle,
-    depositInsurance,
+    deposit,
+    savings,
+    insurance,
+    depositInsurance, // 레거시 합계 (구버전 저장 데이터 호환용)
     account,
     stocks,
     crypto,
     retirement,
     jeonse,
     housingDeposit,
+    deathInsurance,
     businessRentDeposit: business.rentDeposit,
     businessEquipment: business.equipment,
     businessTotal: business.total,
@@ -433,17 +523,29 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
  * 판정·변제에 쓰이는 "신용채무" 금액 산출
  *  - 사용자가 입력한 총 신용채무(totalCreditDebt)
  *  - 전세대출 있음 + 질권설정 없음(no) → 전세대출 원금을 신용채권에 가산
+ *  - 차량 담보대출 > 시세 + 공매 처분 선택 → (시세 × 0.5 − 담보대출)의 음수분 가산
  *  - unknown은 호출부(calculateDiagnosis)에서 jeonseLienOverride를 'yes'/'no' 두 번 넘겨 이중 계산
  */
 export function calcCreditDebt(answers, { jeonseLienOverride } = {}) {
-  const base = Number(answers.totalCreditDebt) || 0;
-  if (answers.housingType !== '전세') return base;
-  if (answers.jeonseHasLoan !== 'yes') return base;
+  let base = Number(answers.totalCreditDebt) || 0;
 
-  const effectiveLien = jeonseLienOverride || answers.jeonseLien;
-  if (effectiveLien === 'no') {
-    return base + (Number(answers.jeonseLoanAmount) || 0);
+  // 차량 공매 잔존 채무 편입
+  if ((answers.otherAssets || []).includes('vehicle')) {
+    base += calcVehicleAuctionDeficit({
+      vehicleValue: answers.vehicleValue,
+      vehicleLoan: answers.vehicleLoan,
+      vehicleAuction: answers.vehicleAuction,
+    });
   }
+
+  // 전세대출 질권설정 없음 시 원금 편입
+  if (answers.housingType === '전세' && answers.jeonseHasLoan === 'yes') {
+    const effectiveLien = jeonseLienOverride || answers.jeonseLien;
+    if (effectiveLien === 'no') {
+      base += Number(answers.jeonseLoanAmount) || 0;
+    }
+  }
+
   return base;
 }
 
@@ -857,6 +959,10 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
           type: 'note',
           text: '입력하신 양육비 금액은 최저생계비에 포함되어 월 가용소득 계산에 반영되었습니다.',
         },
+        {
+          type: 'note',
+          text: '[실무상 변제계획안 10.기타사항 추가될 수 있는 내용]',
+        },
       ],
     });
   }
@@ -1044,6 +1150,330 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
           type: 'p',
           text:
             '※ 입력하신 내용과 실제 채무 발생 사유가 다르다면 "채무 발생 주요 원인" 섹션의 [수정] 버튼으로 내용을 변경해보세요.',
+        },
+      ],
+    });
+  }
+
+  // (7) 현재 연체·압류 상황별 안내
+  const delinqList = Array.isArray(answers.delinquencyStatus) ? answers.delinquencyStatus : [];
+  const seizureList = Array.isArray(answers.seizureTypes) ? answers.seizureTypes : [];
+
+  if (delinqList.includes('연체중(1~3개월)')) {
+    notices.push({
+      id: 'delinquency_1to3months',
+      title: '현재 상황 안내 — 연체 1~3개월',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '현재 연체 기간이 비교적 길지 않은 초기 단계로 판단됩니다. 아직 상황이 더 악화되기 전이므로, ' +
+            '서둘러 회생 절차를 검토할 필요가 있습니다. 개인회생을 신청하면 금지명령을 통해 채권자의 ' +
+            '추심·압류·독촉 등으로부터 법적 보호를 받을 가능성이 있습니다.',
+        },
+      ],
+    });
+  }
+
+  if (delinqList.includes('연체중(3개월이상)')) {
+    notices.push({
+      id: 'delinquency_over3months',
+      title: '현재 상황 안내 — 연체 3개월 이상',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '현재 연체가 중·장기화된 상태로 보입니다. 이 경우 채권자의 독촉이 계속될 뿐 아니라, ' +
+            '급여나 예금, 기타 재산에 대한 압류 절차가 언제든지 진행될 수 있는 단계입니다. ' +
+            '가능한 한 신속하게 채무조정 절차를 검토하는 것이 바람직합니다.',
+        },
+      ],
+    });
+  }
+
+  if (delinqList.includes('추심독촉중')) {
+    notices.push({
+      id: 'harassment',
+      title: '현재 상황 안내 — 추심·독촉 진행 중',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '현재 채권자의 독촉이나 추심으로 인해 일상생활에 상당한 불편과 심리적 부담이 발생하고 있는 상태로 ' +
+            '판단됩니다. 개인회생 절차를 통해 금지명령 결정을 받게 되면, 이러한 추심·압류 독촉으로부터 ' +
+            '법적인 보호를 받을 수 있습니다.',
+        },
+      ],
+    });
+  }
+
+  if (delinqList.includes('압류진행중')) {
+    // 급여 압류
+    if (seizureList.includes('salary')) {
+      notices.push({
+        id: 'seizure_salary',
+        title: '압류 안내 — 급여 압류',
+        blocks: [
+          {
+            type: 'p',
+            text:
+              '급여 압류가 진행 중인 경우, 회생절차를 통해 중지명령을 받아 집행을 멈출 수 있습니다. ' +
+              '또한 제3채무자(직장 등)에 적립된 압류금은 인가결정 이후 변제 재원으로 사용될 수 있어, ' +
+              '경우에 따라 인가결정 전까지 별도로 법원에 변제금을 납부하지 않아도 되는 상황이 발생할 수 있습니다.',
+          },
+          { type: 'p', text: '250만원 초과 ~ 500만원 이하 구간은 일정 계산식에 따라 압류 가능 금액이 산정됩니다.' },
+          {
+            type: 'ul',
+            items: [
+              '250만원 이하 → 0원',
+              '260만원 → 10만원',
+              '270만원 → 20만원',
+              '280만원 → 30만원',
+              '290만원 → 40만원',
+              '300만원 → 50만원',
+              '350만원 → 100만원',
+              '400만원 → 150만원',
+              '450만원 → 200만원',
+              '500만원 → 250만원',
+            ],
+          },
+          { type: 'p', text: '500만원 초과 구간 예시:' },
+          {
+            type: 'ul',
+            items: [
+              '600만원 → 300만원',
+              '650만원 → 337.5만원',
+              '700만원 → 375만원',
+              '750만원 → 412.5만원',
+              '800만원 → 450만원',
+              '850만원 → 487.5만원',
+              '900만원 → 525만원',
+              '950만원 → 562.5만원',
+              '1,000만원 → 600만원',
+            ],
+          },
+        ],
+      });
+    }
+
+    // 통장 지급정지 압류
+    if (seizureList.includes('account')) {
+      notices.push({
+        id: 'seizure_account',
+        title: '압류 안내 — 통장 지급정지 압류',
+        blocks: [
+          {
+            type: 'p',
+            text:
+              '이미 압류된 금융계좌는 회생 신청만으로 즉시 자유롭게 사용할 수 있는 것은 아니며, 통상 ' +
+              '최종 인가결정 이후 압류 해제가 가능해집니다. 따라서 이미 압류된 계좌에 잔액이 남아 있다면, ' +
+              '추가적인 피해를 막기 위해 중지명령 신청 여부를 빠르게 검토해야 합니다.',
+          },
+          {
+            type: 'p',
+            text:
+              '또한 기존 압류 계좌로 추가 입금이 되지 않도록 유의할 필요가 있습니다. ' +
+              '금지명령 결정 이후에는 압류되지 않은 다른 금융계좌를 사용하는 데에는 일반적으로 문제가 없습니다.',
+          },
+        ],
+      });
+    }
+
+    // 가압류
+    if (seizureList.includes('provisional')) {
+      notices.push({
+        id: 'seizure_provisional',
+        title: '압류 안내 — 가압류 (부동산·임차보증금 등)',
+        blocks: [
+          {
+            type: 'p',
+            text:
+              '가압류는 본안소송 전 채권보전을 위한 조치로, 아직 확정적인 강제집행은 아니지만 향후 채권 ' +
+              '회수를 위한 사전 조치에 해당합니다. 부동산·임차보증금·급여채권 등에 가압류가 되어 있는 ' +
+              '경우라도, 회생 절차를 통해 인가결정을 받으면 해제가 가능합니다.',
+          },
+        ],
+      });
+    }
+  }
+
+  // (8) 과거 회생·파산 이력별 안내
+  if (answers.pastHistory === '회생면책(5년이내)') {
+    notices.push({
+      id: 'past_recovery_within5y',
+      title: '과거 이력 안내 — 회생 면책 (5년 이내)',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '과거 회생 절차를 통해 면책을 받은 경우, 원칙적으로 면책 결정이 확정된 때로부터 5년이 경과해야 ' +
+            '재신청이 가능합니다. 따라서 과거 사건번호를 통해 면책 시점을 정확히 확인하는 절차가 필요합니다. ' +
+            '아직 5년이 지나지 않았다면 재신청은 제한될 수 있습니다. 참고로 과거 파산면책의 경우에는 통상 ' +
+            '7년 경과 여부가 함께 검토됩니다.',
+        },
+      ],
+    });
+  }
+
+  if (answers.pastHistory === '회생면책(5년이상)') {
+    notices.push({
+      id: 'past_recovery_over5y',
+      title: '과거 이력 안내 — 회생 면책 (5년 이상)',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '과거 회생 면책 후 5년이 경과하였다면 재신청 자체는 가능할 수 있습니다. 다만 단순히 기간이 ' +
+            '지났다는 사정만으로 충분한 것은 아니며, 과거 사건과 비교하여 현재 채무 발생 경위, 소득 상황, ' +
+            '채권 구조 등에 어떤 차이가 있는지 소명절차가 경우에 따라 필요할 수 있습니다. ' +
+            '실무상 법원은 과거 회생자료부터 현재 변제계획안까지 폭넓게 심사할 수 있습니다.',
+        },
+      ],
+    });
+  }
+
+  if (answers.pastHistory === '파산면책') {
+    notices.push({
+      id: 'past_bankruptcy',
+      title: '과거 이력 안내 — 파산 면책',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '과거 파산면책을 받은 경우에는 폐지결정 또는 면책결정 이후 7년 이상 경과 여부가 중요한 ' +
+            '판단 요소가 됩니다. 기간이 충분히 경과하였다면 신청을 검토할 수 있으나, 다시 채무조정을 ' +
+            '받게 된 경위와 현재 상황에 대해 보다 구체적인 설명이 요구될 수 있습니다.',
+        },
+      ],
+    });
+  }
+
+  if (answers.pastHistory === '현재진행중') {
+    notices.push({
+      id: 'past_in_progress',
+      title: '과거 이력 안내 — 현재 회생 진행 중',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '현재 이미 회생절차가 진행 중이라면, 재신청 필요성이 있는지부터 면밀히 검토해야 합니다. ' +
+            '상당 기간 동안 변제를 이어온 경우라면 단순 재신청이 유리하지 않을 수 있습니다. ' +
+            '다만 인가 이후 새롭게 발생한 채무가 있거나 누락채권이 확인된 경우 등 특별한 사정이 있다면 ' +
+            '재신청 가능성을 검토할 수 있습니다.',
+        },
+        {
+          type: 'p',
+          text:
+            '이 경우에는 기존 납입 변제금, 남은 회차, 추가 채권금액 등을 종합적으로 계산해야 하며, ' +
+            '재신청 시 특별한 사정이 부족하면 금지명령이 제한될 가능성도 있습니다.',
+        },
+      ],
+    });
+  }
+
+  if (answers.pastHistory === '기각·폐지') {
+    notices.push({
+      id: 'past_dismissed',
+      title: '과거 이력 안내 — 기각·폐지',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '과거 회생 신청이 기각된 이력이 있더라도 재신청 자체가 당연히 불가능한 것은 아닙니다. ' +
+            '다만 이전 사건의 채권자목록, 변제계획안, 기각 사유와 현재 사정을 비교하여 다시 설명하는 ' +
+            '절차가 필요합니다.',
+        },
+        {
+          type: 'p',
+          text:
+            '과거 자료 제출이나 기각 사유에 대한 보완 소명이 요구될 수 있으며, 재신청 시에는 반드시 ' +
+            '현실적으로 이행 가능한 변제금액과 변제기간으로 계획을 구성해야 합니다.',
+        },
+      ],
+    });
+  }
+
+  // (9) 대출 발생 시점별 안내 (최대 2개 선택)
+  const loanPeriods = Array.isArray(answers.loanOriginPeriod) ? answers.loanOriginPeriod : [];
+
+  if (loanPeriods.includes('1to6months')) {
+    notices.push({
+      id: 'loan_1to6months',
+      title: '대출 발생 시점 안내 — 1개월 ~ 6개월 사이',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '최근에 발생한 대출금으로 판단되므로, 사용처가 매우 중요한 검토 요소가 됩니다. ' +
+            '기존 대출금 상환이나 대환 목적이라면 비교적 설명이 가능할 수 있으나, 주식·도박·코인투자·' +
+            '낭비성 소비·사행성 지출 등에 사용된 경우에는 불리하게 작용할 수 있습니다. ' +
+            '특히 대출 발생 시점이 매우 짧은 경우에는 청산가치를 반영하기 위해 변제기간이 늘어나거나 ' +
+            '많은 추가 소명이 요구될 가능성이 있습니다.',
+        },
+      ],
+    });
+  }
+
+  if (loanPeriods.includes('7to12months')) {
+    notices.push({
+      id: 'loan_7to12months',
+      title: '대출 발생 시점 안내 — 7개월 ~ 12개월 사이',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '회생 절차를 이용하기에 무리가 없는 수준의 대출 발생 시점으로 볼 수 있습니다. ' +
+            '다만 이 기간 내 적지 않은 금액을 대여한 뒤 회생을 신청하는 경우에는, ' +
+            '대출금 사용처와 채무 증가 경위에 따라 변제기간이 36개월 이상으로 산정될 수 있으므로 ' +
+            '주의가 필요합니다.',
+        },
+      ],
+    });
+  }
+
+  if (loanPeriods.includes('1year_plus')) {
+    notices.push({
+      id: 'loan_1year_plus',
+      title: '대출 발생 시점 안내 — 1년 이상',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '일정 기간 동안 채무를 유지·상환해 온 것으로 보이며, 최근 급격히 악화된 채무라고 단정하기는 ' +
+            '어려운 상태입니다. 이 경우에는 대출금 사용처 자체보다는 현재의 소득, 부양가족, 재산가치 등 ' +
+            '현실적인 상환능력이 더 중요한 판단 기준이 될 가능성이 높습니다.',
+        },
+      ],
+    });
+  }
+
+  if (loanPeriods.includes('2year_plus')) {
+    notices.push({
+      id: 'loan_2year_plus',
+      title: '대출 발생 시점 안내 — 2년 이상',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '대출 발생 후 상당한 기간이 경과한 상태로, 실무상 과거 대출금 사용처에 대해 크게 문제 삼지 ' +
+            '않을 가능성이 높습니다. 이 경우에는 현재의 소득, 재산, 부양가족, 생활 여건 등을 중심으로 ' +
+            '변제금액이 결정될 가능성이 높습니다. 즉, 과거보다 현재의 상환능력이 더 중요한 기준이 됩니다.',
+        },
+      ],
+    });
+  }
+
+  if (loanPeriods.includes('3year_plus')) {
+    notices.push({
+      id: 'loan_3year_plus',
+      title: '대출 발생 시점 안내 — 3년 이상',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '오랜 기간 채무 관계를 유지해 온 경우로, 단기 채무 발생에 비해 상대적으로 안정적인 사정으로 ' +
+            '평가될 수 있습니다. 장기간 변제하지 못한 특별한 사유가 존재하고, 최근 사행행위나 재산 임의처분 등 ' +
+            '특별한 문제가 없다면 회생절차 진행과 개시결정에 있어 매우 긍정적으로 검토될 여지가 있습니다.',
         },
       ],
     });
