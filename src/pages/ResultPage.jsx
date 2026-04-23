@@ -14,6 +14,7 @@ import { getDiagnosis } from '../lib/db';
 import { useDiagnosis } from '../hooks/useDiagnosis';
 import { formatKoreanMoney, manwonToWon, VERDICT } from '../lib/calculator';
 import { resolveJeonseExemption } from '../data/regions';
+import { askOverallAnalysis } from '../lib/gemini';
 
 // =========================================================================
 // 판정 스타일
@@ -115,6 +116,9 @@ export default function ResultPage() {
       <VerdictHero result={r} />
 
       <div className="page-wrap" style={{ paddingTop: 16 }}>
+        {/* 모두AI — Gemini 기반 종합 총평 */}
+        <ModuAISummary result={r} answers={a} />
+
         {/* 주의 사항 */}
         {r.warnings && r.warnings.length > 0 && <WarningsCard warnings={r.warnings} />}
 
@@ -164,6 +168,143 @@ export default function ResultPage() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// =========================================================================
+// 모두AI — Gemini 기반 종합 총평 (결과 리포트 상단)
+// =========================================================================
+function buildModuAISummaryData(result, answers) {
+  const a = answers || {};
+  const r = result || {};
+  const p = r.paymentPlan || {};
+  const L = r.liquidation || {};
+
+  // Gemini에 전달할 핵심 지표 요약 (원 단위는 만원 기준으로 변환)
+  const won2manwon = (v) => (Number.isFinite(v) ? Math.floor(v / 10000) : null);
+
+  return {
+    판정: r.verdictTitle,
+    판정상세: r.verdictDetail,
+    관할법원: r.court?.courtName || '-',
+    회생유형: a.recoveryType,
+    가족: {
+      결혼상태: a.maritalStatus,
+      배우자소득유무: a.spouseIncome,
+      미성년자녀: a.minorChildren || 0,
+      부양부모: a.dependentParents || 0,
+      부양가족수_산정: r.familyCount,
+    },
+    소득_월단위_만원: {
+      월소득: a.monthlyIncome || 0,
+      최저생계비: won2manwon(r.livingExpense),
+      월세공제: won2manwon(r.housingDeduction),
+      양육비공제: won2manwon(r.childSupportExpense),
+      월가용소득: won2manwon(r.disposableIncome),
+    },
+    채무_만원: {
+      신용채무합계: won2manwon(r.creditDebt),
+      주거형태: a.housingType,
+      채무발생사유: a.debtCauses,
+    },
+    재산_청산가치_만원: {
+      자가부동산: won2manwon(L.realEstate),
+      차량: won2manwon(L.vehicle),
+      예금: won2manwon(L.deposit),
+      적금: won2manwon(L.savings),
+      보험: won2manwon(L.insurance),
+      청약: won2manwon(L.account),
+      주식: won2manwon(L.stocks),
+      코인: won2manwon(L.crypto),
+      퇴직금: won2manwon(L.retirement),
+      전세보증금: won2manwon(L.jeonse),
+      월세보증금: won2manwon(L.housingDeposit),
+      사망보험금: won2manwon(L.deathInsurance),
+      사업장임차보증금: won2manwon(L.businessRentDeposit),
+      영업비품: won2manwon(L.businessEquipment),
+      합계: won2manwon(L.total),
+    },
+    변제계획_만원: p.monthlyPayment ? {
+      월변제금: won2manwon(p.monthlyPayment),
+      변제기간_개월: p.period,
+      총변제액: won2manwon(p.totalPayment),
+      탕감액: won2manwon(p.exemption),
+      변제율_퍼센트: p.repaymentRate ? Number((p.repaymentRate * 100).toFixed(1)) : null,
+      감면율_퍼센트: p.exemptionRate ? Number((p.exemptionRate * 100).toFixed(1)) : null,
+      is24개월특례: r.is24Special,
+    } : null,
+    특별자격: a.specialQualifications,
+    연체_압류상황: a.delinquencyStatus,
+    과거회생파산이력: a.pastHistory,
+    대출발생시점: a.loanOriginPeriod,
+  };
+}
+
+function ModuAISummary({ result, answers }) {
+  const [summary, setSummary] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    (async () => {
+      try {
+        const data = buildModuAISummaryData(result, answers);
+        const text = await askOverallAnalysis(data);
+        if (!cancelled) {
+          setSummary(text);
+          setLoading(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(true);
+          setLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div
+      className="card"
+      style={{
+        background: 'linear-gradient(135deg, #eef2ff 0%, #faf5ff 100%)',
+        borderColor: '#c7d2fe',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 20 }}>🤖</span>
+        <strong style={{ fontSize: 16, color: 'var(--c-primary)', fontWeight: 800 }}>모두AI</strong>
+        <span style={{ fontSize: 12, color: 'var(--c-text-muted)', fontWeight: 600 }}>· 종합 총평</span>
+      </div>
+      {loading ? (
+        <div style={{ fontSize: 14, color: 'var(--c-text-sub)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+          <span>진단 결과를 분석하고 있어요…</span>
+        </div>
+      ) : error ? (
+        <div style={{ fontSize: 14, color: 'var(--c-text-sub)', lineHeight: 1.7 }}>
+          일시적으로 AI 총평을 불러올 수 없습니다. 잠시 후 페이지를 새로고침해 주세요.
+        </div>
+      ) : (
+        <div
+          style={{
+            fontSize: 14,
+            lineHeight: 1.9,
+            color: 'var(--c-text-primary)',
+            whiteSpace: 'pre-line',
+            wordBreak: 'keep-all',
+          }}
+        >
+          {summary}
+        </div>
+      )}
     </div>
   );
 }
