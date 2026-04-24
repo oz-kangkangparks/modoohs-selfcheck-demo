@@ -13,7 +13,12 @@ import { useState, useEffect } from 'react';
 import { getDiagnosis } from '../lib/db';
 import { useDiagnosis } from '../hooks/useDiagnosis';
 import { formatKoreanMoney, manwonToWon, VERDICT } from '../lib/calculator';
-import { resolveJeonseExemption } from '../data/regions';
+import {
+  resolveJeonseExemption,
+  resolveHousingGroup,
+  getHousingBaseIncluded,
+  getHousingAdditionalLimit,
+} from '../data/regions';
 import { askOverallAnalysis } from '../lib/gemini';
 
 // =========================================================================
@@ -182,8 +187,16 @@ function buildModuAISummaryData(result, answers) {
   const p = r.paymentPlan || {};
   const L = r.liquidation || {};
 
-  // Gemini에 전달할 핵심 지표 요약 (원 단위는 만원 기준으로 변환)
-  const won2manwon = (v) => (Number.isFinite(v) ? Math.floor(v / 10000) : null);
+  // 금액은 사전 포맷된 한국어 문자열로 전달 (AI가 그대로 인용하도록 — 단위 혼동 방지)
+  const fmtWon = (won) => {
+    if (!Number.isFinite(won) || won === 0) return '0원';
+    return formatKoreanMoney(won);
+  };
+  const fmtManwon = (manwon) => {
+    const n = Number(manwon);
+    if (!Number.isFinite(n) || n === 0) return '0원';
+    return formatKoreanMoney(n * 10000);
+  };
 
   // 신청 가능한 관할법원 전체 리스트 (거주지·직장지 기반, 최대 4개)
   const courtList = Array.isArray(r.court?.availableCourts) && r.court.availableCourts.length > 0
@@ -199,46 +212,48 @@ function buildModuAISummaryData(result, answers) {
     가족: {
       결혼상태: a.maritalStatus,
       배우자소득유무: a.spouseIncome,
-      미성년자녀: a.minorChildren || 0,
-      부양부모: a.dependentParents || 0,
-      부양가족수_산정: r.familyCount,
+      미성년자녀: `${a.minorChildren || 0}명`,
+      부양부모: `${a.dependentParents || 0}명`,
+      부양가족수_산정: Number.isFinite(r.familyCount)
+        ? `${Number(r.familyCount).toFixed(1).replace(/\.0$/, '')}인`
+        : '-',
     },
-    소득_월단위_만원: {
-      월소득: a.monthlyIncome || 0,
-      최저생계비: won2manwon(r.livingExpense),
-      월세공제: won2manwon(r.housingDeduction),
-      양육비공제: won2manwon(r.childSupportExpense),
-      월가용소득: won2manwon(r.disposableIncome),
+    소득_지출: {
+      월소득: fmtManwon(a.monthlyIncome),
+      최저생계비: fmtWon(r.livingExpense),
+      월세공제: fmtWon(r.housingDeduction),
+      양육비공제: fmtWon(r.childSupportExpense),
+      월가용소득: fmtWon(r.disposableIncome),
     },
-    채무_만원: {
-      신용채무합계: won2manwon(r.creditDebt),
+    채무: {
+      신용채무합계: fmtWon(r.creditDebt),
       주거형태: a.housingType,
       채무발생사유: a.debtCauses,
     },
-    재산_청산가치_만원: {
-      자가부동산: won2manwon(L.realEstate),
-      차량: won2manwon(L.vehicle),
-      예금: won2manwon(L.deposit),
-      적금: won2manwon(L.savings),
-      보험: won2manwon(L.insurance),
-      청약: won2manwon(L.account),
-      주식: won2manwon(L.stocks),
-      코인: won2manwon(L.crypto),
-      퇴직금: won2manwon(L.retirement),
-      전세보증금: won2manwon(L.jeonse),
-      월세보증금: won2manwon(L.housingDeposit),
-      사망보험금: won2manwon(L.deathInsurance),
-      사업장임차보증금: won2manwon(L.businessRentDeposit),
-      영업비품: won2manwon(L.businessEquipment),
-      합계: won2manwon(L.total),
+    재산_청산가치: {
+      자가부동산: fmtWon(L.realEstate),
+      차량: fmtWon(L.vehicle),
+      예금: fmtWon(L.deposit),
+      적금: fmtWon(L.savings),
+      보험: fmtWon(L.insurance),
+      청약: fmtWon(L.account),
+      주식: fmtWon(L.stocks),
+      코인: fmtWon(L.crypto),
+      퇴직금: fmtWon(L.retirement),
+      전세보증금: fmtWon(L.jeonse),
+      월세보증금: fmtWon(L.housingDeposit),
+      사망보험금: fmtWon(L.deathInsurance),
+      사업장임차보증금: fmtWon(L.businessRentDeposit),
+      영업비품: fmtWon(L.businessEquipment),
+      합계: fmtWon(L.total),
     },
-    변제계획_만원: p.monthlyPayment ? {
-      월변제금: won2manwon(p.monthlyPayment),
-      변제기간_개월: p.period,
-      총변제액: won2manwon(p.totalPayment),
-      탕감액: won2manwon(p.exemption),
-      변제율_퍼센트: p.repaymentRate ? Number((p.repaymentRate * 100).toFixed(1)) : null,
-      감면율_퍼센트: p.exemptionRate ? Number((p.exemptionRate * 100).toFixed(1)) : null,
+    변제계획: p.monthlyPayment ? {
+      월변제금: fmtWon(p.monthlyPayment),
+      변제기간: `${p.period}개월`,
+      총변제액: fmtWon(p.totalPayment),
+      탕감액: fmtWon(p.exemption),
+      변제율: p.repaymentRate ? `${(p.repaymentRate * 100).toFixed(1)}%` : null,
+      감면율: p.exemptionRate ? `${(p.exemptionRate * 100).toFixed(1)}%` : null,
       is24개월특례: r.is24Special,
     } : null,
     특별자격: a.specialQualifications,
@@ -429,7 +444,6 @@ function NoticesCard({ notices }) {
 function PaymentPlanCard({ result, answers }) {
   const p = result.paymentPlan;
   const creditDebt = result.creditDebt;
-  const surplus = p.totalPayment > creditDebt; // 소득으로 충분히 상환 가능한 경우
 
   // 계산 기준 정보 — 월 소득 / 부양가족 수 / 최저생계비
   const monthlyIncomeWon = manwonToWon(Number(answers?.monthlyIncome) || 0);
@@ -450,11 +464,29 @@ function PaymentPlanCard({ result, answers }) {
       ? Math.max(0, 1 - p.totalPayment / creditDebt)
       : 0;
 
+  // surplus 분할 납부 정보 (칩 29개월 678만 + 1개월 338만)
+  const hasSplit = Number(p.lastMonthPayment) > 0 && Number(p.fullMonths) > 0;
+  const monthlySubtext = hasSplit ? `마지막 1개월 ${formatKoreanMoney(p.lastMonthPayment)}` : null;
+  const periodSubtext = hasSplit ? `${p.fullMonths}개월 + 1개월` : null;
+
   let narrative;
-  if (surplus) {
+  // 우선순위 최상위: 변제율 5% 미만 — 채무자 회생 및 파산에 관한 법률 제614조 제2항 미충족
+  if (repaymentRate < 0.05) {
     narrative = (
       <>
-        현재 소득으로 <Strong>{p.period}개월 이전에</Strong> 채무 전액을 상환할 수 있을 것으로 보입니다.
+        총 변제예상액이 개인회생채권 총금액의 100분의 3을 곱한 금액에 100만 원을 더한 금액에 미달하여
+        '채무자 회생 및 파산에 관한 법률 제614조 제2항'을 충족하지 못하므로,
+        실무상 원금과 이자를 포함한 금액 <Strong>최소 5% 이상의 변제율</Strong>이 만족되어야 합니다.
+        <br />
+        최저생계비를 축소 또는 변제기간을 연장하는 것을 검토하시기 바랍니다.
+      </>
+    );
+  } else if (hasSplit) {
+    narrative = (
+      <>
+        <Strong>{p.fullMonths}개월간</Strong> 매월 <Strong>{formatKoreanMoney(p.monthlyPayment)}</Strong>씩,
+        마지막 1개월은 <Strong>{formatKoreanMoney(p.lastMonthPayment)}</Strong>을 변제하시면,
+        총 <Strong>{p.period}개월</Strong>만에 채무 전액(<Strong>{formatKoreanMoney(creditDebt)}</Strong>)을 상환하실 수 있습니다.
         일반 상환 또는 채무 조정이 더 유리할 수 있으니 <Strong>전문가 상담</Strong>을 받아보시길 권장합니다.
       </>
     );
@@ -489,10 +521,20 @@ function PaymentPlanCard({ result, answers }) {
       </div>
       <div className="metric-row metric-row--primary">
         <MetricCard label="최저생계비"  value={formatKoreanMoney(livingExpenseWon)}  color="var(--c-text-primary)" />
-        <MetricCard label="월 변제금"    value={formatKoreanMoney(p.monthlyPayment)} color="var(--c-primary)" />
+        <MetricCard
+          label="월 변제금"
+          value={formatKoreanMoney(p.monthlyPayment)}
+          subtext={monthlySubtext}
+          color="var(--c-primary)"
+        />
       </div>
       <div className="metric-row metric-row--primary">
-        <MetricCard label="변제 기간"    value={`${p.period}개월`}                    color="var(--c-text-primary)" />
+        <MetricCard
+          label="변제 기간"
+          value={`${p.period}개월`}
+          subtext={periodSubtext}
+          color="var(--c-text-primary)"
+        />
         <MetricCard label="변제율"       value={`${(repaymentRate * 100).toFixed(1)}%`} color="var(--c-primary)" />
       </div>
       <div className="metric-row metric-row--primary">
@@ -525,11 +567,12 @@ function PaymentPlanCard({ result, answers }) {
   );
 }
 
-function MetricCard({ label, value, color, compact }) {
+function MetricCard({ label, value, subtext, color, compact }) {
   return (
     <div className={`metric-card${compact ? ' metric-card--compact' : ''}`}>
       <div className="metric-card__label">{label}</div>
       <div className="metric-card__value" style={{ color }}>{value}</div>
+      {subtext && <div className="metric-card__subtext">{subtext}</div>}
     </div>
   );
 }
@@ -604,14 +647,14 @@ function MyAssetsCard({ result, answers }) {
     { label: '퇴직금', v: L.retirement },
     { label: '전세 보증금', v: L.jeonse },
     { label: '월세 보증금', v: L.housingDeposit || 0 },
-    { label: '사망보험금 (1,500만 공제 후)', v: L.deathInsurance || 0 },
+    { label: '사망보험금', v: L.deathInsurance || 0 },
     { label: '사업장 임차보증금', v: L.businessRentDeposit || 0 },
     { label: '영업비품 (환가 예상)', v: L.businessEquipment || 0 },
   ].filter((r) => r.v > 0);
 
   return (
     <div className="card">
-      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>내 재산 내역</div>
+      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>회생에서의 재산 평가</div>
       {rows.length === 0 ? (
         <div style={{ fontSize: 14, color: 'var(--c-text-muted)' }}>확인된 재산이 없습니다.</div>
       ) : (
@@ -832,11 +875,12 @@ function AssetsDetailAccordion({ answers: a, result }) {
       value: finalW,
       lines: [
         `수령 총 합계 ${formatKoreanMoney(rcvW)} − 공제 1,500만원 = ${formatKoreanMoney(finalW)}${rcvW - 15_000_000 < 0 ? ' (음수는 0 처리)' : ''}`,
+        '사망보험금 1,500만원 이하는 압류금지채권입니다. 따라서 1,500만원 뺀 나머지 금액이 재산으로 반영됩니다.',
       ],
     });
   }
 
-  // 9. 월세 보증금
+  // 9. 월세 보증금 — 섹션 3-5 지역별 최우선변제금(면제재산) 공제 기준
   if (a.housingType === '월세' && (Number(a.housingDeposit) || 0) > 0) {
     const depW = manwonToWon(Number(a.housingDeposit) || 0);
     blocks.push({
@@ -1034,6 +1078,15 @@ function InputSummaryCards({ answers, result, onEdit }) {
               ['배우자 채무', mapSpouseLevel(a.spouseDebtLevel, money('spouseDebtCustom'), SPOUSE_DEBT_LABELS)],
             ]
           : []),
+        // 배우자 건강상태 (기혼 + 소득·재산·채무 모두 '없음' 조건에서만 입력 받음)
+        ...(a.maritalStatus === '기혼' &&
+          a.spouseIncome === 'no' &&
+          a.spouseAssetLevel === 'none' &&
+          a.spouseDebtLevel === 'none' &&
+          Array.isArray(a.spouseHealthStatus) &&
+          a.spouseHealthStatus.length > 0
+          ? [['배우자 건강상태', formatCodeList(a.spouseHealthStatus, SPOUSE_HEALTH_LABELS)]]
+          : []),
         ['부양 부모', `${a.dependentParents || 0}명`],
         ...(result.familyCount !== undefined
           ? [['부양가족 수 (본인 포함, 산정 결과)', `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}인`]]
@@ -1066,6 +1119,39 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ['주거 형태', A('housingType')],
         ...(a.housingType === '월세' ? [['월세', money('monthlyRent')], ['월세 보증금', money('housingDeposit')]] : []),
       ],
+      referenceBlock: (() => {
+        if (a.housingType !== '월세') return null;
+        const rentManwon = Number(a.monthlyRent) || 0;
+        if (rentManwon <= 0) return null;
+        const fc = Number.isFinite(result.familyCount) ? result.familyCount : 1;
+        const group = resolveHousingGroup(a.residenceSido, a.residenceSigungu);
+        const baseIncludedWon = getHousingBaseIncluded(fc);
+        const addLimitWon = getHousingAdditionalLimit(group, fc);
+        const totalLimitWon = baseIncludedWon + addLimitWon;
+        const rentWon = manwonToWon(rentManwon);
+        let deductionWon = 0;
+        let note = '';
+        if (rentWon <= baseIncludedWon) {
+          deductionWon = 0;
+          note = `월세(${formatKoreanMoneyExact(rentWon)})가 최저생계비 내 기준 포함분(${formatKoreanMoneyExact(baseIncludedWon)}) 이하이므로 추가 주거비 인정은 없습니다.`;
+        } else if (rentWon <= totalLimitWon) {
+          deductionWon = rentWon - baseIncludedWon;
+          note = `월세(${formatKoreanMoneyExact(rentWon)})에서 기준 포함분(${formatKoreanMoneyExact(baseIncludedWon)})을 뺀 ${formatKoreanMoneyExact(deductionWon)}이 추가 주거비로 인정됩니다. (총 인정 한도 내)`;
+        } else {
+          deductionWon = addLimitWon;
+          note = `월세(${formatKoreanMoneyExact(rentWon)})가 주거비 총 인정 한도(${formatKoreanMoneyExact(totalLimitWon)})를 초과하여, 추가 주거비는 한도인 ${formatKoreanMoneyExact(addLimitWon)}까지만 인정됩니다.`;
+        }
+        return {
+          title: '주거비 인정 내역',
+          items: [
+            ['주거비 기준 포함분 (최저생계비 내)', formatKoreanMoneyExact(baseIncludedWon)],
+            ['추가 주거비 인정 한도', formatKoreanMoneyExact(addLimitWon)],
+            ['주거비 총 인정 한도', formatKoreanMoneyExact(totalLimitWon)],
+            ['인정된 추가 주거비', formatKoreanMoneyExact(deductionWon)],
+          ],
+          note,
+        };
+      })(),
     },
     ...(a.housingType === '자가' ? [{
       title: '자가 부동산',
@@ -1111,7 +1197,7 @@ function InputSummaryCards({ answers, result, onEdit }) {
       if (!hasOtherAssets && !hasDeathInsurance) return [];
 
       return [{
-        title: '그 외 재산',
+        title: '내 재산 내역',
         editId: 'otherAssets',
         rows: [
           ...(hasOtherAssets
@@ -1199,6 +1285,13 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ...(Array.isArray(a.delinquencyStatus) && a.delinquencyStatus.includes('압류진행중')
           ? [['압류 유형', formatCodeList(a.seizureTypes, SEIZURE_LABELS)]]
           : []),
+        ...(Array.isArray(a.delinquencyStatus) &&
+          a.delinquencyStatus.includes('압류진행중') &&
+          Array.isArray(a.seizureTypes) &&
+          a.seizureTypes.includes('provisional') &&
+          a.foreclosureInProgress
+          ? [['부동산 경매절차 진행 여부', a.foreclosureInProgress === 'yes' ? '예' : '아니오']]
+          : []),
         ['과거 회생·파산 이력', A('pastHistory')],
         ...(Array.isArray(a.loanOriginPeriod) && a.loanOriginPeriod.length > 0
           ? [['대출 발생 시점', formatCodeList(a.loanOriginPeriod, LOAN_PERIOD_LABELS)]]
@@ -1229,10 +1322,52 @@ function InputSummaryCards({ answers, result, onEdit }) {
               </div>
             );
           })}
+          {sec.referenceBlock && (
+            <div className="summary-reference">
+              <div className="summary-reference__header">
+                <span className="summary-reference__badge">참고</span>
+                <span className="summary-reference__title">{sec.referenceBlock.title}</span>
+              </div>
+              {(sec.referenceBlock.items || []).map(([label, value]) => (
+                <div key={label} className="summary-reference__row">
+                  <span className="summary-reference__row-label">{label}</span>
+                  <span className="summary-reference__row-value">{value}</span>
+                </div>
+              ))}
+              {sec.referenceBlock.note && (
+                <div className="summary-reference__note">{sec.referenceBlock.note}</div>
+              )}
+            </div>
+          )}
         </div>
       ))}
     </div>
   );
+}
+
+// 만원 단위 이하를 절사하지 않는 정확한 금액 포맷 ("27만 3,861원")
+function formatKoreanMoneyExact(num) {
+  if (!num || num === 0) return '0원';
+  const sign = num < 0 ? '-' : '';
+  const abs = Math.abs(num);
+  if (abs >= 100_000_000) {
+    const eok = Math.floor(abs / 100_000_000);
+    const rem = abs % 100_000_000;
+    const man = Math.floor(rem / 10_000);
+    const won = rem % 10_000;
+    let out = `${sign}${eok}억`;
+    if (man > 0) out += ` ${man.toLocaleString()}만`;
+    if (won > 0) out += ` ${won.toLocaleString()}원`;
+    else out += '원';
+    return out;
+  }
+  if (abs >= 10_000) {
+    const man = Math.floor(abs / 10_000);
+    const won = abs % 10_000;
+    if (won > 0) return `${sign}${man.toLocaleString()}만 ${won.toLocaleString()}원`;
+    return `${sign}${man.toLocaleString()}만원`;
+  }
+  return `${sign}${abs.toLocaleString()}원`;
 }
 
 function mapAssetLabel(code) {
@@ -1323,7 +1458,7 @@ function formatCourtList(court) {
 
 function mapBusinessOfficeType(code) {
   const m = {
-    owned: '자가',
+    owned: '소유',
     jeonse: '전세',
     rental: '월세',
     none: '해당없음 (재택·무점포)',
@@ -1343,6 +1478,14 @@ function mapChildSupportStatus(code) {
 const SPOUSE_INCOME_LABELS = { lt100: '100만원 미만', lt200: '200만원 미만', lt300: '300만원 미만' };
 const SPOUSE_ASSET_LABELS  = { none: '없음', lt500: '500만원 미만', lt1000: '1,000만원 미만', lt2000: '2,000만원 미만' };
 const SPOUSE_DEBT_LABELS   = { none: '없음', lt1000: '1,000만원 미만', lt3000: '3,000만원 미만', lt5000: '5,000만원 미만' };
+
+const SPOUSE_HEALTH_LABELS = {
+  moderate: '중등도 질환으로 일부 제약',
+  severe: '중증 질환으로 부양 필요',
+  care_needed: '상시 간병 또는 전적 부양 필요',
+  disabled: '장애 등록자',
+  no_issue: '건강 이상 없음',
+};
 
 function mapSpouseLevel(code, customText, labels) {
   if (!code) return '-';
@@ -1456,6 +1599,15 @@ const LOCAL_CSS = `
 .metric-card--compact {
   padding: 12px 8px;
 }
+/* subtext — 분할 납부 등 부가 정보 */
+.metric-card__subtext {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-text-muted);
+  word-break: keep-all;
+  line-height: 1.5;
+}
 
 /* 모바일 — 주요 지표는 그대로 2열 유지, 보조 지표는 2+1 */
 @media (max-width: 480px) {
@@ -1556,6 +1708,68 @@ const LOCAL_CSS = `
   font-size: 13px; font-weight: 600; color: var(--c-text-primary);
   word-break: keep-all; text-align: right;
   white-space: pre-line;
+}
+
+/* 참고 정보 블록 — 사용자 입력과 구분된 보조 정보 */
+.summary-reference {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+}
+.summary-reference__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.summary-reference__badge {
+  display: inline-block;
+  background: var(--c-primary);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.summary-reference__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text-primary);
+}
+.summary-reference__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 0;
+  gap: 10px;
+  border-bottom: 1px dotted #e2e8f0;
+}
+.summary-reference__row:last-of-type { border-bottom: none; }
+.summary-reference__row-label {
+  font-size: 12px;
+  color: var(--c-text-muted);
+  font-weight: 500;
+  word-break: keep-all;
+}
+.summary-reference__row-value {
+  font-size: 12px;
+  color: var(--c-text-primary);
+  font-weight: 700;
+  text-align: right;
+  word-break: keep-all;
+}
+.summary-reference__note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: white;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--c-text-sub);
+  line-height: 1.7;
+  word-break: keep-all;
 }
 
 /* 합계 행 — 강조 표시 */

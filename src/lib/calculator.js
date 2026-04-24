@@ -69,15 +69,25 @@ export const DISQUALIFYING_USAGES = new Set(['gambling', 'stocks', 'crypto']);
 export function calcFamilyCount({
   maritalStatus,
   spouseIncome,
+  spouseAssetLevel,
+  spouseDebtLevel,
+  spouseHealthStatus,
   minorChildren = 0,
   dependentParents = 0,
 }) {
   let count = 1; // 본인
 
-  // 배우자 점수
-  if (maritalStatus === '기혼') {
-    if (spouseIncome === 'no') count += 1; // 전액 부양
-    // spouseIncome === 'yes' → +0 (자립)
+  // 배우자 점수 — 실질적 부양 필요성 판정
+  //   조건: 기혼 + 소득 없음 + 재산 '없음' + 채무 '없음' + 건강상태 질환/장애 1개 이상 체크
+  //   (건강상태 'no_issue'만 있거나 비어있으면 미인정)
+  if (maritalStatus === '기혼' && spouseIncome === 'no') {
+    const assetNone = spouseAssetLevel === 'none';
+    const debtNone = spouseDebtLevel === 'none';
+    const healthArr = Array.isArray(spouseHealthStatus) ? spouseHealthStatus : [];
+    const hasHealthIssue = healthArr.some(h => h && h !== 'no_issue');
+    if (assetNone && debtNone && hasHealthIssue) {
+      count += 1;
+    }
   }
 
   // 자녀 점수
@@ -342,8 +352,9 @@ export function calcBusinessAssets({
 }
 
 /**
- * 월세 보증금 재산가치 — 지역별 최우선 변제금 공제 후 잔액
- * 주택임대차보호법상 최우선변제금은 전세·월세 공통 적용
+ * 월세 보증금 재산가치 — 섹션 3-5 지역별 최우선변제금(면제재산) 공제 후 잔액
+ *   공제액 = resolveJeonseExemption(거주지) — 주택임대차보호법 최우선변제금
+ *   (월세는 "월세 금액"만 섹션 2-4 공제를 쓰고, "월세 보증금"은 전세와 동일한 면제재산 적용)
  */
 export function calcHousingDepositAsset({
   housingType,
@@ -476,7 +487,7 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
     businessEquipmentValue: answers.businessEquipmentValue,
   });
 
-  // 월세 보증금 — 지역별 최우선 변제금 공제 후 잔액
+  // 월세 보증금 — 섹션 3-5 지역별 최우선변제금(면제재산) 공제 후 잔액
   const housingDeposit = calcHousingDepositAsset({
     housingType: answers.housingType,
     housingDeposit: answers.housingDeposit,
@@ -637,6 +648,9 @@ export function calcPaymentPlan({ disposableIncome, liquidationValue, creditDebt
   let monthlyPayment;
   let forcedUpward = false;
   let feasible = true;
+  // surplus(초과 변제) 분할 납부 정보 — 기본 0 (정상 케이스는 분할 없음)
+  let fullMonths = 0;          // disp만큼 매월 납부하는 기간
+  let lastMonthPayment = 0;    // 마지막 1개월 부분 납부 금액
 
   // 1) 기본 기간으로 충족 여부
   if (disp * basePeriod >= minPayment) {
@@ -657,7 +671,24 @@ export function calcPaymentPlan({ disposableIncome, liquidationValue, creditDebt
     }
   }
 
-  const totalPayment = monthlyPayment * period;
+  // 4) surplus 보정 — 총 변제액이 신용채무를 초과하면 기간을 단축하고 마지막 개월은 부분 납부
+  //    forcedUpward 케이스는 최소변제액 강제 상향이라 surplus 발생 불가
+  if (!forcedUpward && creditDebt > 0 && monthlyPayment > 0 && monthlyPayment * period > creditDebt) {
+    const newFullMonths = Math.floor(creditDebt / monthlyPayment);
+    const remainder = creditDebt - monthlyPayment * newFullMonths;
+    fullMonths = newFullMonths;
+    if (remainder > 0) {
+      lastMonthPayment = remainder;
+      period = newFullMonths + 1;
+    } else {
+      lastMonthPayment = 0;
+      period = newFullMonths;
+    }
+  }
+
+  const totalPayment = lastMonthPayment > 0
+    ? monthlyPayment * fullMonths + lastMonthPayment
+    : monthlyPayment * period;
   const exemption = Math.max(0, creditDebt - totalPayment);
   // 변제율 / 감면율 (creditDebt === 0 방어)
   const repaymentRate = creditDebt > 0 ? Math.min(1, totalPayment / creditDebt) : 0;
@@ -667,6 +698,8 @@ export function calcPaymentPlan({ disposableIncome, liquidationValue, creditDebt
     basePeriod,
     period,
     monthlyPayment,
+    fullMonths,          // 정액(monthlyPayment) 납부 개월 수 (0이면 분할 없음)
+    lastMonthPayment,    // 마지막 1개월 부분 납부 금액 (0이면 분할 없음)
     minPayment,
     totalPayment,
     exemption,
@@ -747,6 +780,9 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
   const familyCount = calcFamilyCount({
     maritalStatus: answers.maritalStatus,
     spouseIncome: answers.spouseIncome,
+    spouseAssetLevel: answers.spouseAssetLevel,
+    spouseDebtLevel: answers.spouseDebtLevel,
+    spouseHealthStatus: answers.spouseHealthStatus,
     minorChildren: answers.minorChildren,
     dependentParents: answers.dependentParents,
   });
@@ -1098,7 +1134,15 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
           type: 'p',
           text:
             '※ 국토부 특별법상 "전세사기피해자"로 인정받은 자이며, ' +
-            '위 배제 조건에 해당되지 않는 경우에만 24개월 단축이 가능합니다.',
+            '아래 배제 조건에 해당되지 않는 경우에만 24개월 단축이 가능합니다.',
+        },
+        {
+          type: 'ul',
+          items: [
+            '대출금 사용 중 도박·주식·코인이 전체 금액의 20% 초과',
+            '개인 채권자 2인 초과',
+            '전체 채무 액수 1.5억원 초과',
+          ],
         },
       ],
     });
@@ -1133,6 +1177,34 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
             `현재 예상 관할 법원이 "${court.courtName || '지방법원'}"로 회생법원이 아닙니다. ` +
             '24개월 단축 특례는 서울·수원·부산·대전·대구·광주 등 회생법원 관할인 경우에만 적용 가능하므로, ' +
             '기본 변제 기간인 36개월 기준으로 변제 계획이 산정되었습니다.',
+        },
+      ],
+    });
+  }
+
+  // (6-c) 24개월 자격 보유자이지만 배제 조건(qualificationExclusions)에 체크 → 배제
+  const QUAL_EXCLUSION_LABELS_FOR_NOTICE = {
+    debt_over_150m: '전체 채권금액 1.5억원 초과',
+    creditors_over_2: '개인 채권자 2명 초과',
+    speculation_over_20pct: '도박·주식·코인 사용 부채가 전체 부채의 20% 초과',
+  };
+  const checkedExclusions = (answers.qualificationExclusions || []).filter(
+    (e) => e && e !== 'none',
+  );
+  if (hasSpecialQual && checkedExclusions.length > 0) {
+    notices.push({
+      id: 'special24_exclusion_blocked',
+      title: '24개월 단축 불가 — 배제 조건 해당',
+      blocks: [
+        {
+          type: 'p',
+          text:
+            '특별자격을 보유하셨더라도, 아래 배제 조건에 해당되어 24개월 단축 특례가 인정되지 않습니다. ' +
+            '기본 변제 기간인 36개월 기준으로 변제 계획이 산정되었습니다.',
+        },
+        {
+          type: 'ul',
+          items: checkedExclusions.map((code) => QUAL_EXCLUSION_LABELS_FOR_NOTICE[code] || code),
         },
       ],
     });
@@ -1303,6 +1375,36 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
           },
         ],
       });
+
+      // 가압류 + 부동산 경매절차 진행 중
+      if (answers.foreclosureInProgress === 'yes') {
+        notices.push({
+          id: 'foreclosure_in_progress',
+          title: '부동산 경매절차 진행 중 안내',
+          blocks: [
+            {
+              type: 'p',
+              text:
+                '현재 담보권 실행 또는 일반채권 연체로 인하여 부동산 경매절차가 진행 중인 경우, ' +
+                '회생절차상 중지명령 신청을 통해 경매절차를 일시적으로 정지시킬 수 있습니다.',
+            },
+            {
+              type: 'p',
+              text: '다만, 인가결정 이후에는 집행정지 효력이 종료되므로 다시 경매절차가 재개될 수 있습니다.',
+            },
+            {
+              type: 'p',
+              text: '통상 인가결정에 이르기까지는 각급 법원의 사정에 따라 최소 8개월에서 1년 이상 소요될 수 있습니다.',
+            },
+            {
+              type: 'p',
+              text:
+                '따라서 귀하께서는 인가결정 전까지 경매를 진행하는 채권을 상환할 방안을 마련하시거나, ' +
+                '개별 처분 등의 방법을 통하여 경매로 인한 손해를 최소화할 필요가 있습니다.',
+            },
+          ],
+        });
+      }
     }
   }
 

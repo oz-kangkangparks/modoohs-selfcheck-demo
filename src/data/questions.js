@@ -206,6 +206,24 @@ const questions = [
         showIf: (a) => a.maritalStatus === '기혼' && a.spouseDebtLevel === 'custom',
       },
       {
+        field: 'spouseHealthStatus',
+        subType: 'multiSelect',
+        label: '배우자 건강상태 (해당되는 것 모두 선택)',
+        options: [
+          { value: 'no_issue', label: '건강 이상 없음', exclusive: true },
+          { value: 'moderate', label: '중등도 질환으로 일부 제약 있음 (지속적 치료 필요, 근로에 일부 제한)' },
+          { value: 'severe', label: '중증 질환으로 부양 필요성이 있음 (장기치료·반복 입원, 정상 근로 어려움)' },
+          { value: 'care_needed', label: '상시 간병 또는 전적인 부양이 필요한 상태 (독립적 생활 어려움)' },
+          { value: 'disabled', label: '장애 등록자로 스스로 근로가 어려운 상태' },
+        ],
+        columns: 1,
+        showIf: (a) =>
+          a.maritalStatus === '기혼' &&
+          a.spouseIncome === 'no' &&
+          a.spouseAssetLevel === 'none' &&
+          a.spouseDebtLevel === 'none',
+      },
+      {
         field: 'dependentParents',
         subType: 'stepper',
         label: '부양 중인 부모',
@@ -468,7 +486,7 @@ const questions = [
         subType: 'select',
         label: '가게 형태',
         options: [
-          { value: 'owned', label: '자가' },
+          { value: 'owned', label: '소유' },
           { value: 'jeonse', label: '전세' },
           { value: 'rental', label: '월세' },
           { value: 'none', label: '해당없음 (재택·무점포)' },
@@ -705,7 +723,7 @@ const questions = [
         label: '친족 사망보험금 총 합계',
         hint:
           '과거 1년 이내 여러 건이 있다면 모두 합산해 입력하세요.\n' +
-          '예) 5,000만원 + 1억 수령 → 1억 5,000만원 입력.',
+          '※ 5,000만원 + 1억 수령 → 1억 5,000만원 입력.',
         showIf: (a) => a.deathInsuranceReceived === 'yes',
       },
     ],
@@ -903,6 +921,21 @@ const questions = [
         ],
         columns: 1,
         showIf: (a) => Array.isArray(a.delinquencyStatus) && a.delinquencyStatus.includes('압류진행중'),
+      },
+      {
+        field: 'foreclosureInProgress',
+        subType: 'select',
+        label: '부동산 경매절차 진행 여부',
+        options: [
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
+        ],
+        columns: 2,
+        showIf: (a) =>
+          Array.isArray(a.delinquencyStatus) &&
+          a.delinquencyStatus.includes('압류진행중') &&
+          Array.isArray(a.seizureTypes) &&
+          a.seizureTypes.includes('provisional'),
       },
       {
         field: 'pastHistory',
