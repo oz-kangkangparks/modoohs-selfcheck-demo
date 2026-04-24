@@ -106,6 +106,7 @@ export default function DiagnosisPage() {
     const v = state.answers[field.field];
     if (field.subType === 'money') return v !== undefined && v !== null && v !== '';
     if (field.subType === 'multiSelect') return Array.isArray(v) && v.length > 0;
+    if (field.subType === 'text') return typeof v === 'string' && v.trim().length > 0;
     // select · triState
     return v !== undefined && v !== null && v !== '';
   }

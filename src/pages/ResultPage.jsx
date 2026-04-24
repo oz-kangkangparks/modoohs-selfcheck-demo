@@ -1257,6 +1257,9 @@ function InputSummaryCards({ answers, result, onEdit }) {
       editId: 'debtCauses',
       rows: [
         ['발생 원인', formatCodeList(a.debtCauses, DEBT_CAUSE_LABELS)],
+        ...(Array.isArray(a.debtCauses) && a.debtCauses.includes('other') && (a.debtCauseOther || '').trim().length > 0
+          ? [['기타 사유', a.debtCauseOther]]
+          : []),
       ],
     },
     {
@@ -1500,15 +1503,23 @@ function mapSpouseLevel(code, customText, labels) {
 function AnalysisReportCard({ result }) {
   const style = VERDICT_STYLE[result.verdict] || VERDICT_STYLE[VERDICT.CONSULT];
   const p = result.paymentPlan;
-  const surplus = p && p.totalPayment > result.creditDebt;
+  const creditDebt = result.creditDebt;
+  // 분할 납부(surplus) 케이스 감지
+  const hasSplit = p && Number(p.lastMonthPayment) > 0 && Number(p.fullMonths) > 0;
+  // 구버전 저장 데이터 방어 — repaymentRate 즉석 계산
+  const repaymentRate = p && Number.isFinite(p.repaymentRate)
+    ? p.repaymentRate
+    : (p && creditDebt > 0 ? Math.min(1, p.totalPayment / creditDebt) : 0);
 
   let body;
   if (result.verdict === VERDICT.IMPOSSIBLE) {
     body = '보유 재산으로 현재 채무를 충분히 갚을 수 있어 회생의 실익이 없습니다. 재산 처분을 통한 일반 상환이나 다른 채무 조정 방법을 검토하시길 권장합니다.';
   } else if (result.verdict === VERDICT.CONSULT) {
     body = '조건 일부가 충족되지 않아 단독 신청은 어렵지만, 생활비 조정·소득 변동·변제 기간 조정 등 상담을 통해 회생 가능성을 찾을 수 있습니다. 반드시 전문가 상담을 받아보세요.';
-  } else if (surplus) {
-    body = `현재 소득만으로도 약 ${Math.ceil(result.creditDebt / p.monthlyPayment)}개월 이내 채무 전액 상환이 가능한 것으로 보입니다. 회생 절차의 실익이 크지 않을 수 있으니 일반 상환 또는 전문가 상담을 우선 검토하세요.`;
+  } else if (p && repaymentRate < 0.05) {
+    body = "총 변제예상액이 개인회생채권 총금액의 100분의 3을 곱한 금액에 100만 원을 더한 금액에 미달하여 '채무자 회생 및 파산에 관한 법률 제614조 제2항'을 충족하지 못하므로, 실무상 원금과 이자를 포함한 금액 최소 5% 이상의 변제율이 만족되어야 합니다. 최저생계비 축소 또는 변제기간 연장을 검토하시기 바랍니다.";
+  } else if (hasSplit) {
+    body = `입력 정보 기준으로 ${p.fullMonths}개월간 매월 ${formatKoreanMoney(p.monthlyPayment)}씩 납입하고, 마지막 1개월은 ${formatKoreanMoney(p.lastMonthPayment)}을 납입하면 총 ${p.period}개월만에 채무 전액(${formatKoreanMoney(creditDebt)})을 상환할 수 있을 것으로 보입니다. 실제 인가 결정은 법원 판단에 따라 달라질 수 있습니다.`;
   } else if (p) {
     body = `입력 정보 기준으로 매월 ${formatKoreanMoney(p.monthlyPayment)}씩 ${p.period}개월 납입하면 약 ${formatKoreanMoney(p.exemption)}의 면책(탕감)이 예상됩니다. 실제 인가 결정은 법원 판단에 따라 달라질 수 있습니다.`;
   } else {

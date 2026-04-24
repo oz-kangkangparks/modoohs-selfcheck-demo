@@ -804,27 +804,41 @@ const questions = [
   },
 
   // =======================================================
-  // 13. 채무 발생 사유 (multi-select)
+  // 13. 채무 발생 사유 (composite — 복수선택 + 기타 상세)
   // =======================================================
   {
     id: 'debtCauses',
-    type: 'multi-select',
-    field: 'debtCauses',
+    type: 'composite',
     title: '채무가 발생한 주요 원인을 모두 선택해주세요',
     subtitle: '해당되는 항목을 모두 선택해주세요 (복수 선택 가능)',
-    options: [
-      { value: 'living', label: '생활비' },
-      { value: 'business', label: '사업자금' },
-      { value: 'housing', label: '주거비용 (전세·월세)' },
-      { value: 'medical', label: '병원비·의료비' },
-      { value: 'guarantee', label: '보증채무' },
-      { value: 'stocks', label: '주식 투자' },
-      { value: 'crypto', label: '코인 (가상자산)' },
-      { value: 'gambling', label: '도박' },
-      { value: 'fraud', label: '사기 피해' },
-      { value: 'other', label: '기타' },
+    fields: [
+      {
+        field: 'debtCauses',
+        subType: 'multiSelect',
+        label: '채무 발생 주요 원인',
+        columns: 1,
+        options: [
+          { value: 'living', label: '생활비' },
+          { value: 'business', label: '사업자금' },
+          { value: 'housing', label: '주거비용 (전세·월세)' },
+          { value: 'medical', label: '병원비·의료비' },
+          { value: 'guarantee', label: '보증채무' },
+          { value: 'stocks', label: '주식 투자' },
+          { value: 'crypto', label: '코인 (가상자산)' },
+          { value: 'gambling', label: '도박' },
+          { value: 'fraud', label: '사기 피해' },
+          { value: 'other', label: '기타' },
+        ],
+      },
+      {
+        field: 'debtCauseOther',
+        subType: 'text',
+        label: '기타 사유 — 구체적 발생 원인을 입력해주세요',
+        placeholder: '예: 가족 사망·이혼·재해·이주·소송 등 구체적 사유를 입력해주세요',
+        rows: 3,
+        showIf: (a) => Array.isArray(a.debtCauses) && a.debtCauses.includes('other'),
+      },
     ],
-    validation: { required: true },
     helpCard: {
       title: '왜 솔직하게 선택해야 하나요?',
       easy: '법원은 빚이 왜 생겼는지를 보고 면책(탕감) 여부를 결정합니다. 도박·주식·코인 같은 투기성 원인이 섞여 있으면 면책이 어려워질 수 있으니, 정확히 체크하시고 전문가와 상담을 받으시는 것이 안전합니다.',

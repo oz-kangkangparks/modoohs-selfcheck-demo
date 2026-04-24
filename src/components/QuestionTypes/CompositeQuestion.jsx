@@ -91,9 +91,37 @@ function SubField({ field, value, allAnswers, onChange }) {
       return <SubRegionPicker field={field} value={value} allAnswers={allAnswers} onChange={onChange} />;
     case 'multiSelect':
       return <SubMultiSelect field={field} value={value} onChange={onChange} />;
+    case 'text':
+      return <SubText field={field} value={value} onChange={onChange} />;
     default:
       return <p style={{ color: 'var(--c-danger)' }}>지원하지 않는 서브 타입: {field.subType}</p>;
   }
+}
+
+// ------------------ text (free-form textarea) ------------------
+function SubText({ field, value, onChange }) {
+  return (
+    <textarea
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={field.placeholder || '내용을 입력해주세요'}
+      rows={field.rows || 3}
+      style={{
+        width: '100%',
+        padding: '12px 14px',
+        borderRadius: 10,
+        border: '1px solid var(--c-border)',
+        fontSize: 14,
+        fontFamily: 'inherit',
+        lineHeight: 1.6,
+        resize: 'vertical',
+        boxSizing: 'border-box',
+        outline: 'none',
+      }}
+      onFocus={(e) => { e.target.style.borderColor = 'var(--c-primary)'; }}
+      onBlur={(e) => { e.target.style.borderColor = 'var(--c-border)'; }}
+    />
+  );
 }
 
 // ------------------ select ------------------
