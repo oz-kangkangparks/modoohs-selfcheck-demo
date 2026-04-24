@@ -4,7 +4,7 @@
  * 근거 문서: 자가진단_계산로직_정리.md
  *   - 섹션 1  핵심 개념 3가지
  *   - 섹션 2  가용소득 / 부양가족 자동 산정 / 월세 공제
- *   - 섹션 3  청산가치 (부동산×0.7 / 예금·보험 250만 공제 / 질권설정 / 면제재산)
+ *   - 섹션 3  청산가치 (부동산 시세 − 담보대출 / 예금·보험 250만 공제 / 질권설정 / 면제재산)
  *   - 섹션 4  변제기간 산출 / 3-state 판정 / 24개월 특례
  *   - 섹션 5  관할 법원 자동 판별
  *
@@ -38,8 +38,8 @@ export const DEPOSIT_INSURANCE_EXEMPT = 2_500_000;
 /** 사망보험금 공제 한도 (원) — 1,500만원 공제 후 잔액이 재산으로 편입 */
 export const DEATH_INSURANCE_EXEMPT = 15_000_000;
 
-/** 부동산 법원 환산 배율 — 섹션 3-1 */
-export const REAL_ESTATE_MULTIPLIER = 0.7;
+/** 부동산 법원 환산 배율 — 2026.04.23 이후 미적용 (시세 전액 기준) */
+export const REAL_ESTATE_MULTIPLIER = 1.0;
 
 /** 최소변제액 가산율 — 섹션 4 (청산가치 보장 원칙) */
 export const MIN_PAYMENT_MULTIPLIER = 1.1;
@@ -193,7 +193,8 @@ export function calcChildSupportExpense({
 // ================================================================
 
 /**
- * 부동산 청산가치 — 시세 × 0.7 − 담보대출, 명의·지분 반영
+ * 부동산 청산가치 — 시세 − 담보대출, 명의·지분 반영
+ *   (법원 환산 배율 0.7은 2026.04.23 사용자 지시로 제거됨 → 시세 전액 기준)
  *
  * @param {'single'|'joint'|'spouse'} ownership
  * @param {boolean} isRehabCourt — 회생법원 여부 (배우자 단독 명의일 때만 영향)
@@ -205,7 +206,7 @@ export function calcRealEstateAsset({
   share = 0.5, // joint 시 지분 (기본 1/2)
   isRehabCourt = true,
 }) {
-  const net = Math.max(0, (Number(realEstateValue) || 0) * REAL_ESTATE_MULTIPLIER - (Number(realEstateMortgage) || 0));
+  const net = Math.max(0, (Number(realEstateValue) || 0) - (Number(realEstateMortgage) || 0));
   switch (ownership) {
     case 'single':
       return net;
@@ -696,7 +697,7 @@ export const VERDICT = {
  *
  * ※ 사용자 메시지는 일반 고객 눈높이 — 계산식·법률 용어 배제, 쉬운 문장으로.
  */
-export function determineVerdict({ creditDebt, liquidationValue, disposableIncome, minPayment }) {
+export function determineVerdict({ creditDebt, liquidationValue, disposableIncome, minPayment, familyCount }) {
   if (creditDebt <= liquidationValue) {
     return {
       verdict: VERDICT.IMPOSSIBLE,
@@ -712,10 +713,17 @@ export function determineVerdict({ creditDebt, liquidationValue, disposableIncom
     };
   }
   if (disposableIncome * MAX_PERIOD < minPayment) {
+    const fcText = Number.isFinite(familyCount)
+      ? Number(familyCount).toFixed(1).replace(/\.0$/, '')
+      : '-';
     return {
       verdict: VERDICT.CONSULT,
       title: '전문가 상담이 필요합니다',
-      detail: '매월 여유 자금을 5년(60개월) 동안 모두 모아도 법원에서 요구하는 최소 변제 금액에 못 미칩니다. 월 변제액을 늘리거나 생활비를 더 줄이는 등의 조정이 필요하니 전문가 상담을 받아보세요.',
+      detail:
+        '회생절차에서는 청산가치 보장원칙이 적용됩니다.\n' +
+        '즉, 채무자는 보유 재산의 청산가치 이상을 변제하여야 합니다.\n' +
+        `그런데 귀하의 경우, ${fcText}인 기준 최저생계비를 공제하면 가용소득이 부족하여 청산가치를 충족할 수 없는 상태입니다.\n` +
+        '따라서 청산가치를 만족하는 변제계획을 수립하기 위해서는 부양가족 수를 조정하여 최저생계비를 감액할 필요가 있습니다.',
     };
   }
   return {
@@ -795,6 +803,7 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     liquidationValue: liquidation.total,
     disposableIncome,
     minPayment,
+    familyCount,
   });
 
   // 변제 계획 (불가 판정이면 생략)
