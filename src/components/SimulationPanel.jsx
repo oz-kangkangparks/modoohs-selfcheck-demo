@@ -56,7 +56,7 @@ export function SimulationSidePanel() {
         </div>
         <div className="sim-panel__metric">
           <div className="sim-panel__metric-label">부양가족</div>
-          <div className="sim-panel__metric-value">{sim.familyCount}인</div>
+          <div className="sim-panel__metric-value">{sim.familyCount}명</div>
         </div>
         <div className="sim-panel__metric">
           <div className="sim-panel__metric-label">월 가용소득</div>
@@ -153,7 +153,7 @@ export function SimulationMiniBar() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <MobileMetric label="청산가치" value={formatKoreanMoney(sim.liquidation?.total || 0)} />
                 <MobileMetric label="신용채무" value={formatKoreanMoney(sim.creditDebt || 0)} />
-                <MobileMetric label="부양가족" value={`${sim.familyCount}인`} />
+                <MobileMetric label="부양가족" value={`${sim.familyCount}명`} />
                 <MobileMetric label="가용소득" value={formatKoreanMoney(sim.disposableIncome || 0)} />
                 {p && <MobileMetric label="월 변제금" value={formatKoreanMoney(p.monthlyPayment)} />}
                 {p && <MobileMetric label="예상 면책" value={formatKoreanMoney(p.exemption)} />}

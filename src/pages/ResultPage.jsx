@@ -166,7 +166,7 @@ export default function ResultPage() {
           <p style={{ fontSize: 15, opacity: 0.9 }}>모두의회생에서 전문가를 찾아보세요</p>
           <button
             className="btn-primary"
-            onClick={() => window.open('https://modoohs.com/experts', '_blank')}
+            onClick={() => window.open('https://modoohs.com/quick-experts', '_blank', 'noopener,noreferrer')}
             style={{ width: '100%', maxWidth: 300, margin: '20px auto 0' }}
           >
             전문가 찾기
@@ -215,7 +215,7 @@ function buildModuAISummaryData(result, answers) {
       미성년자녀: `${a.minorChildren || 0}명`,
       부양부모: `${a.dependentParents || 0}명`,
       부양가족수_산정: Number.isFinite(r.familyCount)
-        ? `${Number(r.familyCount).toFixed(1).replace(/\.0$/, '')}인`
+        ? `${Number(r.familyCount).toFixed(1).replace(/\.0$/, '')}명`
         : '-',
     },
     소득_지출: {
@@ -448,7 +448,7 @@ function PaymentPlanCard({ result, answers }) {
   // 계산 기준 정보 — 월 소득 / 부양가족 수 / 최저생계비
   const monthlyIncomeWon = manwonToWon(Number(answers?.monthlyIncome) || 0);
   const familyCountText = Number.isFinite(result.familyCount)
-    ? `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}인`
+    ? `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}명`
     : '-';
   const livingExpenseWon = Number(result.livingExpense) || 0;
 
@@ -516,11 +516,11 @@ function PaymentPlanCard({ result, answers }) {
 
       {/* 2열 × 4행 지표 그리드 */}
       <div className="metric-row metric-row--primary">
-        <MetricCard label="월 소득"     value={formatKoreanMoney(monthlyIncomeWon)}  color="var(--c-primary)" />
+        <MetricCard label="월 소득"     value={formatKoreanMoney(monthlyIncomeWon)}  color="var(--c-text-primary)" />
         <MetricCard label="부양가족 수"  value={familyCountText}                      color="var(--c-text-primary)" />
       </div>
       <div className="metric-row metric-row--primary">
-        <MetricCard label="최저생계비"  value={formatKoreanMoney(livingExpenseWon)}  color="var(--c-text-primary)" />
+        <MetricCard label="최저생계비"  value={formatKoreanMoney(livingExpenseWon)}  color="var(--c-primary)" />
         <MetricCard
           label="월 변제금"
           value={formatKoreanMoney(p.monthlyPayment)}
@@ -533,13 +533,13 @@ function PaymentPlanCard({ result, answers }) {
           label="변제 기간"
           value={`${p.period}개월`}
           subtext={periodSubtext}
-          color="var(--c-text-primary)"
+          color="var(--c-primary)"
         />
         <MetricCard label="변제율"       value={`${(repaymentRate * 100).toFixed(1)}%`} color="var(--c-primary)" />
       </div>
       <div className="metric-row metric-row--primary">
-        <MetricCard label="감면율"       value={`${(exemptionRate * 100).toFixed(1)}%`} color="#10b981" />
-        <MetricCard label="탕감액"       value={formatKoreanMoney(p.exemption)}         color="#10b981" />
+        <MetricCard label="감면율"       value={`${(exemptionRate * 100).toFixed(1)}%`} color="var(--c-warning)" />
+        <MetricCard label="탕감액"       value={formatKoreanMoney(p.exemption)}         color="var(--c-warning)" />
       </div>
 
       <div
@@ -1049,9 +1049,10 @@ function InputSummaryCards({ answers, result, onEdit }) {
       title: '가족 구성',
       editId: 'familyGroup',
       rows: [
+        ['부모 부양', `${a.dependentParents || 0}명`],
         ['결혼 상태', A('maritalStatus')],
         ...(a.maritalStatus === '기혼' ? [['배우자 소득', a.spouseIncome === 'yes' ? '있음' : a.spouseIncome === 'no' ? '없음' : '-']] : []),
-        ['미성년 자녀', (() => {
+        ['자녀 부양', (() => {
           const n = Number(a.minorChildren) || 0;
           if (n === 0) return '0명';
           const isCoShared = a.maritalStatus === '기혼' && a.spouseIncome === 'yes';
@@ -1087,9 +1088,17 @@ function InputSummaryCards({ answers, result, onEdit }) {
           a.spouseHealthStatus.length > 0
           ? [['배우자 건강상태', formatCodeList(a.spouseHealthStatus, SPOUSE_HEALTH_LABELS)]]
           : []),
-        ['부양 부모', `${a.dependentParents || 0}명`],
+        // 배우자 부양 인정 (calcFamilyCount의 배우자 포함 조건과 동일)
+        ...(a.maritalStatus === '기혼' &&
+          a.spouseIncome === 'no' &&
+          a.spouseAssetLevel === 'none' &&
+          a.spouseDebtLevel === 'none' &&
+          Array.isArray(a.spouseHealthStatus) &&
+          a.spouseHealthStatus.some((h) => h && h !== 'no_issue')
+          ? [['배우자 부양', '1명']]
+          : []),
         ...(result.familyCount !== undefined
-          ? [['부양가족 수 (본인 포함, 산정 결과)', `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}인`]]
+          ? [['부양가족 수 (본인 포함, 산정 결과)', `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}명`]]
           : []),
       ],
     },
@@ -1131,15 +1140,30 @@ function InputSummaryCards({ answers, result, onEdit }) {
         const rentWon = manwonToWon(rentManwon);
         let deductionWon = 0;
         let note = '';
+        const hi = (text) => (
+          <span style={{ color: 'var(--c-primary)', fontWeight: 700 }}>{text}</span>
+        );
         if (rentWon <= baseIncludedWon) {
           deductionWon = 0;
-          note = `월세(${formatKoreanMoneyExact(rentWon)})가 최저생계비 내 기준 포함분(${formatKoreanMoneyExact(baseIncludedWon)}) 이하이므로 추가 주거비 인정은 없습니다.`;
+          note = (
+            <>
+              월세({hi(formatKoreanMoneyExact(rentWon))})가 최저생계비 내 기준 포함분({hi(formatKoreanMoneyExact(baseIncludedWon))}) 이하이므로 {hi('추가 주거비 인정은 없습니다')}.
+            </>
+          );
         } else if (rentWon <= totalLimitWon) {
           deductionWon = rentWon - baseIncludedWon;
-          note = `월세(${formatKoreanMoneyExact(rentWon)})에서 기준 포함분(${formatKoreanMoneyExact(baseIncludedWon)})을 뺀 ${formatKoreanMoneyExact(deductionWon)}이 추가 주거비로 인정됩니다. (총 인정 한도 내)`;
+          note = (
+            <>
+              월세({hi(formatKoreanMoneyExact(rentWon))})에서 기준 포함분({hi(formatKoreanMoneyExact(baseIncludedWon))})을 뺀 {hi(`${formatKoreanMoneyExact(deductionWon)}이 추가 주거비로 인정됩니다`)}. (총 인정 한도 내)
+            </>
+          );
         } else {
           deductionWon = addLimitWon;
-          note = `월세(${formatKoreanMoneyExact(rentWon)})가 주거비 총 인정 한도(${formatKoreanMoneyExact(totalLimitWon)})를 초과하여, 추가 주거비는 한도인 ${formatKoreanMoneyExact(addLimitWon)}까지만 인정됩니다.`;
+          note = (
+            <>
+              월세({hi(formatKoreanMoneyExact(rentWon))})가 주거비 총 인정 한도({hi(formatKoreanMoneyExact(totalLimitWon))})를 초과하여, 추가 주거비는 {hi(`한도인 ${formatKoreanMoneyExact(addLimitWon)}까지만 인정됩니다`)}.
+            </>
+          );
         }
         return {
           title: '주거비 인정 내역',

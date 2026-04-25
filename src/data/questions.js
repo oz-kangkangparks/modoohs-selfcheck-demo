@@ -82,6 +82,14 @@ const questions = [
     subtitle: '부양가족 수를 자동으로 산정해드립니다',
     fields: [
       {
+        field: 'dependentParents',
+        subType: 'stepper',
+        label: '부모 부양',
+        hint: '연령보다 "실제 부양이 필요한 상태인지"가 기준입니다. 인정 요건·증빙 자료는 도움말을 참고하세요. (0~2명)',
+        min: 0,
+        max: 2,
+      },
+      {
         field: 'maritalStatus',
         subType: 'select',
         label: '결혼 상태',
@@ -107,7 +115,7 @@ const questions = [
       {
         field: 'minorChildren',
         subType: 'stepper',
-        label: '미성년 자녀 수',
+        label: '자녀 부양',
         hint: '성년 자녀는 포함하지 않습니다',
         min: 0,
         max: 10,
@@ -223,14 +231,6 @@ const questions = [
           a.spouseAssetLevel === 'none' &&
           a.spouseDebtLevel === 'none',
       },
-      {
-        field: 'dependentParents',
-        subType: 'stepper',
-        label: '부양 중인 부모',
-        hint: '연령보다 "실제 부양이 필요한 상태인지"가 기준입니다. 인정 요건·증빙 자료는 도움말을 참고하세요. (0~2명)',
-        min: 0,
-        max: 2,
-      },
     ],
     helpCard: {
       title: '부양가족, 누구를 포함해야 하나요?',
@@ -265,8 +265,8 @@ const questions = [
   {
     id: 'incomeGroup',
     type: 'composite',
-    title: '월 소득을 알려주세요',
-    subtitle: '실제로 수령한 세후 금액으로 입력해주세요',
+    title: '본인의 월 소득을 알려주세요',
+    subtitle: '배우자 소득은 제외하고, 본인이 실제로 수령한 세후 금액만 입력해주세요',
     fields: [
       {
         field: 'incomeType',
