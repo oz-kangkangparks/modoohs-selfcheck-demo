@@ -323,6 +323,14 @@ export function calcDeathInsuranceAsset({ deathInsuranceReceived, deathInsurance
   return Math.max(0, amount - DEATH_INSURANCE_EXEMPT);
 }
 
+/**
+ * 상속 재산 — 최근 1년 이내 상속받은 재산의 시세 합계 (공제 없이 전액 청산가치 반영)
+ */
+export function calcInheritanceAsset({ inheritanceReceived, inheritanceAmount = 0 }) {
+  if (inheritanceReceived !== 'yes') return 0;
+  return Math.max(0, Number(inheritanceAmount) || 0);
+}
+
 /** 퇴직금 재산가치 (회사지급 퇴직금만 × 0.5, 연금·IRP는 0) */
 export function calcRetirementAsset({ retirementType, retirementAmount = 0 }) {
   if (retirementType === 'severance') {
@@ -501,9 +509,15 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
     deathInsuranceAmount: answers.deathInsuranceAmount,
   });
 
+  // 상속 재산 — 최근 1년 이내 상속받은 재산 (공제 없이 전액 반영)
+  const inheritance = calcInheritanceAsset({
+    inheritanceReceived: answers.inheritanceReceived,
+    inheritanceAmount: answers.inheritanceAmount,
+  });
+
   const total =
     realEstate + vehicle + deposit + savings + insurance + account + stocks + crypto + retirement +
-    jeonse + business.total + housingDeposit + deathInsurance;
+    jeonse + business.total + housingDeposit + deathInsurance + inheritance;
 
   return {
     realEstate,
@@ -519,6 +533,7 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
     jeonse,
     housingDeposit,
     deathInsurance,
+    inheritance,
     businessRentDeposit: business.rentDeposit,
     businessEquipment: business.equipment,
     businessTotal: business.total,
@@ -1483,35 +1498,36 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
         ],
       });
 
-      // 가압류 + 부동산 경매절차 진행 중
-      if (answers.foreclosureInProgress === 'yes') {
-        notices.push({
-          id: 'foreclosure_in_progress',
-          title: '부동산 경매절차 진행 중 안내',
-          blocks: [
-            {
-              type: 'p',
-              text:
-                '현재 담보권 실행 또는 일반채권 연체로 인하여 부동산 경매절차가 진행 중인 경우, ' +
-                '회생절차상 중지명령 신청을 통해 경매절차를 일시적으로 정지시킬 수 있습니다.',
-            },
-            {
-              type: 'p',
-              text: '다만, 인가결정 이후에는 집행정지 효력이 종료되므로 다시 경매절차가 재개될 수 있습니다.',
-            },
-            {
-              type: 'p',
-              text: '통상 인가결정에 이르기까지는 각급 법원의 사정에 따라 최소 8개월에서 1년 이상 소요될 수 있습니다.',
-            },
-            {
-              type: 'p',
-              text:
-                '따라서 귀하께서는 인가결정 전까지 경매를 진행하는 채권을 상환할 방안을 마련하시거나, ' +
-                '개별 처분 등의 방법을 통하여 경매로 인한 손해를 최소화할 필요가 있습니다.',
-            },
-          ],
-        });
-      }
+    }
+
+    // 부동산 경매절차 진행 중
+    if (seizureList.includes('foreclosure')) {
+      notices.push({
+        id: 'foreclosure_in_progress',
+        title: '부동산 경매절차 진행 중 안내',
+        blocks: [
+          {
+            type: 'p',
+            text:
+              '현재 담보권 실행 또는 일반채권 연체로 인하여 부동산 경매절차가 진행 중인 경우, ' +
+              '회생절차상 중지명령 신청을 통해 경매절차를 일시적으로 정지시킬 수 있습니다.',
+          },
+          {
+            type: 'p',
+            text: '다만, 인가결정 이후에는 집행정지 효력이 종료되므로 다시 경매절차가 재개될 수 있습니다.',
+          },
+          {
+            type: 'p',
+            text: '통상 인가결정에 이르기까지는 각급 법원의 사정에 따라 최소 8개월에서 1년 이상 소요될 수 있습니다.',
+          },
+          {
+            type: 'p',
+            text:
+              '따라서 귀하께서는 인가결정 전까지 경매를 진행하는 채권을 상환할 방안을 마련하시거나, ' +
+              '개별 처분 등의 방법을 통하여 경매로 인한 손해를 최소화할 필요가 있습니다.',
+          },
+        ],
+      });
     }
   }
 

@@ -81,6 +81,8 @@ export function prepareAnswersForCalculator(answers) {
     'retirementAmount',
     // 사망보험금 — 과거 1년 이내 수령 합계
     'deathInsuranceAmount',
+    // 상속 재산 — 최근 1년 이내 상속 합계
+    'inheritanceAmount',
     // 사업자회생 — 사업장 자산
     'businessRentDeposit',
     'businessMonthlyRent',

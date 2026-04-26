@@ -382,7 +382,8 @@ const questions = [
         field: 'realEstateValue',
         subType: 'money',
         label: 'KB시세 또는 네이버 부동산 기준 시세',
-        hint: '정확한 감정가가 아니어도 대략적인 시세면 충분합니다',
+        hint: '정확한 감정가가 아니어도 대략적인 시세면 충분합니다.',
+        notice: '최근 1년 이내에 상속받은 부동산이 있다면, 해당 부동산을 제외한 금액으로 입력해주세요.',
       },
       {
         field: 'realEstateMortgage',
@@ -538,6 +539,7 @@ const questions = [
     field: 'otherAssets',
     title: '그 외 보유 재산을 선택해주세요',
     subtitle: '해당되는 항목을 모두 선택 (없으면 "없음")',
+    notice: '최근 1년 이내에 상속받은 재산이 있다면, 해당 재산을 제외하고 선택·입력해주세요.',
     options: [
       { value: 'vehicle', label: '차량', desc: '자동차·오토바이 (본인 명의)' },
       { value: 'deposit', label: '예금', desc: '은행 예금 잔액' },
@@ -695,6 +697,45 @@ const questions = [
       title: '소액이라도 입력해야 하나요?',
       easy: '예금과 보험 해약환급금을 합한 금액이 250만원 이하라면 법적으로 재산에서 제외되니 걱정하지 않으셔도 돼요. 그래도 보유하신 금액을 정확히 입력해주시는 것이 진단에 도움이 됩니다.',
       tip: '보험 해약환급금은 보험사 앱이나 고객센터에서 확인하실 수 있어요. 정확히 모르시면 "모름"을 선택하셔도 됩니다.',
+    },
+  },
+
+  // =======================================================
+  // 10-A. 최근 1년 이내 상속 재산 — 항상 노출
+  // =======================================================
+  {
+    id: 'inheritanceGroup',
+    type: 'composite',
+    title: '최근 1년 이내 상속 재산 여부',
+    subtitle: '최근 1년 이내에 상속받은 재산이 있으신가요?',
+    fields: [
+      {
+        field: 'inheritanceReceived',
+        subType: 'select',
+        options: [
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
+        ],
+        columns: 2,
+      },
+      {
+        field: 'inheritanceAmount',
+        subType: 'money',
+        label: '상속받은 재산 합계 금액',
+        hint: '부동산 및 차량, 임야, 대지 등 아는 범위 내에서 시세를 입력하세요.',
+        showIf: (a) => a.inheritanceReceived === 'yes',
+      },
+    ],
+    helpCard: {
+      title: '상속받은 재산은 왜 따로 입력하나요?',
+      easy:
+        '최근 1년 이내에 상속받은 재산은 회생 실무상 별도로 평가됩니다. 부동산 시세나 차량·기타 재산을 입력하실 때는 상속받은 부분을 빼고 입력하신 뒤, 이 항목에서 상속받은 재산의 시세를 별도로 합산해 입력해주세요.',
+      cases: [
+        { q: '정확한 시세를 모르겠어요', a: '아는 범위 내에서 대략적인 시세를 입력하시면 됩니다. 부동산은 KB부동산·네이버 부동산, 차량은 SK엔카·K Car 등에서 확인하실 수 있습니다.' },
+        { q: '여러 건을 상속받았어요', a: '부동산·차량·임야·대지 등 모든 상속 재산의 시세를 합산한 총액을 입력해주세요.' },
+        { q: '1년 이전에 상속받은 건?', a: '자가진단은 최근 1년 이내 상속분만 별도로 분리합니다. 1년 이전 상속분은 일반 재산 항목에 포함하시면 됩니다.' },
+      ],
+      tip: '최근 1년 이내 상속받은 재산이 없다면 "아니오"만 선택하시면 됩니다.',
     },
   },
 
@@ -932,24 +973,10 @@ const questions = [
           { value: 'salary', label: '급여 압류' },
           { value: 'account', label: '통장 지급정지 압류' },
           { value: 'provisional', label: '가압류 (부동산·임차보증금 등)' },
+          { value: 'foreclosure', label: '부동산 경매절차 진행' },
         ],
         columns: 1,
         showIf: (a) => Array.isArray(a.delinquencyStatus) && a.delinquencyStatus.includes('압류진행중'),
-      },
-      {
-        field: 'foreclosureInProgress',
-        subType: 'select',
-        label: '부동산 경매절차 진행 여부',
-        options: [
-          { value: 'yes', label: '예' },
-          { value: 'no', label: '아니오' },
-        ],
-        columns: 2,
-        showIf: (a) =>
-          Array.isArray(a.delinquencyStatus) &&
-          a.delinquencyStatus.includes('압류진행중') &&
-          Array.isArray(a.seizureTypes) &&
-          a.seizureTypes.includes('provisional'),
       },
       {
         field: 'pastHistory',

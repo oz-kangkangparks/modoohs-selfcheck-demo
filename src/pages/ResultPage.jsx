@@ -243,6 +243,7 @@ function buildModuAISummaryData(result, answers) {
       전세보증금: fmtWon(L.jeonse),
       월세보증금: fmtWon(L.housingDeposit),
       사망보험금: fmtWon(L.deathInsurance),
+      상속재산: fmtWon(L.inheritance),
       사업장임차보증금: fmtWon(L.businessRentDeposit),
       영업비품: fmtWon(L.businessEquipment),
       합계: fmtWon(L.total),
@@ -648,6 +649,7 @@ function MyAssetsCard({ result, answers }) {
     { label: '전세 보증금', v: L.jeonse },
     { label: '월세 보증금', v: L.housingDeposit || 0 },
     { label: '사망보험금', v: L.deathInsurance || 0 },
+    { label: '최근 1년 이내 상속 재산', v: L.inheritance || 0 },
     { label: '사업장 임차보증금', v: L.businessRentDeposit || 0 },
     { label: '영업비품 (환가 예상)', v: L.businessEquipment || 0 },
   ].filter((r) => r.v > 0);
@@ -876,6 +878,20 @@ function AssetsDetailAccordion({ answers: a, result }) {
       lines: [
         `수령 총 합계 ${formatKoreanMoney(rcvW)} − 공제 1,500만원 = ${formatKoreanMoney(finalW)}${rcvW - 15_000_000 < 0 ? ' (음수는 0 처리)' : ''}`,
         '사망보험금 1,500만원 이하는 압류금지채권입니다. 따라서 1,500만원 뺀 나머지 금액이 재산으로 반영됩니다.',
+      ],
+    });
+  }
+
+  // 8-C. 최근 1년 이내 상속 재산
+  if (a.inheritanceReceived === 'yes' && (Number(a.inheritanceAmount) || 0) > 0) {
+    const inhW = manwonToWon(Number(a.inheritanceAmount) || 0);
+    const finalW = L.inheritance !== undefined ? L.inheritance : inhW;
+    blocks.push({
+      title: '최근 1년 이내 상속 재산',
+      value: finalW,
+      lines: [
+        `상속 재산 합계 ${formatKoreanMoney(inhW)} 전액 반영 = ${formatKoreanMoney(finalW)}`,
+        '최근 1년 이내 상속받은 재산은 별도 공제 없이 전액 청산가치(내 재산)에 반영됩니다.',
       ],
     });
   }
@@ -1243,6 +1259,19 @@ function InputSummaryCards({ answers, result, onEdit }) {
       ],
     }] : []),
     ...((() => {
+      if (!a.inheritanceReceived) return [];
+      const hasInheritance =
+        a.inheritanceReceived === 'yes' && (Number(a.inheritanceAmount) || 0) > 0;
+      return [{
+        title: '최근 1년 이내 상속 재산',
+        editId: 'inheritanceGroup',
+        rows: [
+          ['최근 1년 이내 상속 여부', a.inheritanceReceived === 'yes' ? '예' : '아니오'],
+          ...(hasInheritance ? [['상속 재산 합계', money('inheritanceAmount')]] : []),
+        ],
+      }];
+    })()),
+    ...((() => {
       const otherAssets = Array.isArray(a.otherAssets) ? a.otherAssets : [];
       const hasOtherAssets = otherAssets.length > 0 && !otherAssets.includes('none');
       const hasDeathInsurance =
@@ -1340,13 +1369,6 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ['현재 연체·압류', formatCodeList(a.delinquencyStatus, DELINQUENCY_LABELS)],
         ...(Array.isArray(a.delinquencyStatus) && a.delinquencyStatus.includes('압류진행중')
           ? [['압류 유형', formatCodeList(a.seizureTypes, SEIZURE_LABELS)]]
-          : []),
-        ...(Array.isArray(a.delinquencyStatus) &&
-          a.delinquencyStatus.includes('압류진행중') &&
-          Array.isArray(a.seizureTypes) &&
-          a.seizureTypes.includes('provisional') &&
-          a.foreclosureInProgress
-          ? [['부동산 경매절차 진행 여부', a.foreclosureInProgress === 'yes' ? '예' : '아니오']]
           : []),
         ['과거 회생·파산 이력', A('pastHistory')],
         ...(Array.isArray(a.loanOriginPeriod) && a.loanOriginPeriod.length > 0
@@ -1454,6 +1476,7 @@ const SEIZURE_LABELS = {
   salary: '급여 압류',
   account: '통장 지급정지 압류',
   provisional: '가압류 (부동산·임차보증금 등)',
+  foreclosure: '부동산 경매절차 진행',
 };
 
 const LOAN_PERIOD_LABELS = {

@@ -58,6 +58,24 @@ export default function CompositeQuestion({ question, allAnswers, onFieldChange 
                 {typeof field.hint === 'function' ? field.hint(allAnswers || {}) : field.hint}
               </p>
             )}
+            {field.notice && (
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: '#92400e',
+                  background: 'var(--c-warning-bg)',
+                  border: '1px solid var(--c-warning)',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  marginBottom: 10,
+                  lineHeight: 1.6,
+                  whiteSpace: 'pre-line',
+                }}
+              >
+                {typeof field.notice === 'function' ? field.notice(allAnswers || {}) : field.notice}
+              </div>
+            )}
             <SubField
               field={field}
               value={value}

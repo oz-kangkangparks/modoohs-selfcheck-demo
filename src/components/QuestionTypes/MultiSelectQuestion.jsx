@@ -31,9 +31,29 @@ export default function MultiSelectQuestion({ question, value, onChange }) {
     onChange(next);
   }
 
+  const noticeText = typeof question.notice === 'function' ? question.notice() : question.notice;
+
   return (
     <div>
       <p style={{ fontSize: 12, color: 'var(--c-text-muted)', marginBottom: 8 }}>복수 선택 가능</p>
+      {noticeText && (
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: '#92400e',
+            background: 'var(--c-warning-bg)',
+            border: '1px solid var(--c-warning)',
+            borderRadius: 8,
+            padding: '10px 12px',
+            marginBottom: 12,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-line',
+          }}
+        >
+          {noticeText}
+        </div>
+      )}
       {options.map((opt) => {
         const isSelected = selected.includes(opt.value);
         return (
