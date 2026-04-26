@@ -1564,25 +1564,61 @@ function AnalysisReportCard({ result }) {
     ? p.repaymentRate
     : (p && creditDebt > 0 ? Math.min(1, p.totalPayment / creditDebt) : 0);
 
-  let body;
+  const hi = (text) => (
+    <span style={{ color: 'var(--c-primary)', fontWeight: 700 }}>{text}</span>
+  );
+
+  let mainBody;
   if (result.verdict === VERDICT.IMPOSSIBLE) {
-    body = '보유 재산으로 현재 채무를 충분히 갚을 수 있어 회생의 실익이 없습니다. 재산 처분을 통한 일반 상환이나 다른 채무 조정 방법을 검토하시길 권장합니다.';
+    mainBody = (
+      <>
+        보유 재산으로 현재 채무를 충분히 갚을 수 있어 {hi('회생의 실익이 없습니다')}. 재산 처분을 통한 일반 상환이나 다른 채무 조정 방법을 검토하시길 권장합니다.
+      </>
+    );
   } else if (result.verdict === VERDICT.CONSULT) {
-    body = '조건 일부가 충족되지 않아 단독 신청은 어렵지만, 생활비 조정·소득 변동·변제 기간 조정 등 상담을 통해 회생 가능성을 찾을 수 있습니다. 반드시 전문가 상담을 받아보세요.';
+    mainBody = (
+      <>
+        조건 일부가 충족되지 않아 {hi('단독 신청은 어렵지만')}, 생활비 조정·소득 변동·변제 기간 조정 등 상담을 통해 회생 가능성을 찾을 수 있습니다. 반드시 {hi('전문가 상담')}을 받아보세요.
+      </>
+    );
   } else if (p && repaymentRate < 0.05) {
-    body = "총 변제예상액이 개인회생채권 총금액의 100분의 3을 곱한 금액에 100만 원을 더한 금액에 미달하여 '채무자 회생 및 파산에 관한 법률 제614조 제2항'을 충족하지 못하므로, 실무상 원금과 이자를 포함한 금액 최소 5% 이상의 변제율이 만족되어야 합니다. 최저생계비 축소 또는 변제기간 연장을 검토하시기 바랍니다.";
+    mainBody = (
+      <>
+        총 변제예상액이 개인회생채권 총금액의 100분의 3을 곱한 금액에 100만 원을 더한 금액에 미달하여 '채무자 회생 및 파산에 관한 법률 제614조 제2항'을 충족하지 못하므로, 실무상 원금과 이자를 포함한 금액 {hi('최소 5% 이상의 변제율')}이 만족되어야 합니다. {hi('최저생계비 축소 또는 변제기간 연장')}을 검토하시기 바랍니다.
+      </>
+    );
   } else if (hasSplit) {
-    body = `입력 정보 기준으로 ${p.fullMonths}개월간 매월 ${formatKoreanMoney(p.monthlyPayment)}씩 납입하고, 마지막 1개월은 ${formatKoreanMoney(p.lastMonthPayment)}을 납입하면 총 ${p.period}개월만에 채무 전액(${formatKoreanMoney(creditDebt)})을 상환할 수 있을 것으로 보입니다. 실제 인가 결정은 법원 판단에 따라 달라질 수 있습니다.`;
+    mainBody = (
+      <>
+        입력 정보 기준으로 {hi(`${p.fullMonths}개월간`)} 매월 {hi(formatKoreanMoney(p.monthlyPayment))}씩 납입하고, 마지막 1개월은 {hi(formatKoreanMoney(p.lastMonthPayment))}을 납입하면 총 {hi(`${p.period}개월`)}만에 채무 전액({hi(formatKoreanMoney(creditDebt))})을 상환할 수 있을 것으로 보입니다.
+      </>
+    );
   } else if (p) {
-    body = `입력 정보 기준으로 매월 ${formatKoreanMoney(p.monthlyPayment)}씩 ${p.period}개월 납입하면 약 ${formatKoreanMoney(p.exemption)}의 면책(탕감)이 예상됩니다. 실제 인가 결정은 법원 판단에 따라 달라질 수 있습니다.`;
+    mainBody = (
+      <>
+        귀하께서 입력하신 정보를 기준으로 산정한 결과, 월 {hi(formatKoreanMoney(p.monthlyPayment))}씩 {hi(`${p.period}개월간`)} 변제할 경우 약 {hi(formatKoreanMoney(p.exemption))}의 채무 감면이 예상됩니다.
+      </>
+    );
   } else {
-    body = '';
+    mainBody = null;
   }
+
+  const commonTail = (
+    <>
+      다만, 실제 변제금액과 탕감 가능 금액은 소득, 재산, 부양가족, 채무 발생 경위, 법원 보정 여부 등 여러 사정에 따라 달라질 수 있으며, 최종 개시결정은 법원의 판단에 따라 결정됩니다.
+      <br /><br />
+      보다 정확한 상담을 원하신다면, 「모두의 회생」 전문가에게 본 자가진단 리포트를 제공해 보시기 바랍니다. 입력하신 내용을 바탕으로 보다 편리하고 빠르게 상담 결과를 확인하실 수 있습니다.
+    </>
+  );
 
   return (
     <div className="card" style={{ borderLeft: `6px solid ${style.color}` }}>
       <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>분석 리포트</h2>
-      <p style={{ fontSize: 14, color: 'var(--c-text-secondary)', lineHeight: 1.8, wordBreak: 'keep-all' }}>{body}</p>
+      <p style={{ fontSize: 14, color: 'var(--c-text-secondary)', lineHeight: 1.8, wordBreak: 'keep-all' }}>
+        {mainBody}
+        {mainBody && <><br /><br /></>}
+        {commonTail}
+      </p>
     </div>
   );
 }
