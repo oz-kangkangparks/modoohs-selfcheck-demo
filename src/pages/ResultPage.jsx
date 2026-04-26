@@ -1138,35 +1138,64 @@ function InputSummaryCards({ answers, result, onEdit }) {
         const addLimitWon = getHousingAdditionalLimit(group, fc);
         const totalLimitWon = baseIncludedWon + addLimitWon;
         const rentWon = manwonToWon(rentManwon);
+        const livingExpenseWon = Number(result.livingExpense) || 0;
         let deductionWon = 0;
-        let note = '';
+        if (rentWon <= baseIncludedWon) {
+          deductionWon = 0;
+        } else if (rentWon <= totalLimitWon) {
+          deductionWon = rentWon - baseIncludedWon;
+        } else {
+          deductionWon = addLimitWon;
+        }
         const hi = (text) => (
           <span style={{ color: 'var(--c-primary)', fontWeight: 700 }}>{text}</span>
         );
+        const housingRegionLabel = SIDO_LEVEL_LABELS.has(a.residenceSido)
+          ? a.residenceSido
+          : (a.residenceSigungu || '');
+        const housingTitle = housingRegionLabel
+          ? `${housingRegionLabel} 주거비 인정 내역`
+          : '주거비 인정 내역';
+        const familyCountText = Number(fc).toFixed(1).replace(/\.0$/, '');
+        const regionText = housingRegionLabel || '거주지';
+        const totalLivingWon = livingExpenseWon + deductionWon;
+
+        let firstParagraph;
         if (rentWon <= baseIncludedWon) {
-          deductionWon = 0;
-          note = (
+          firstParagraph = (
             <>
-              월세({hi(formatKoreanMoneyExact(rentWon))})가 최저생계비 내 기준 포함분({hi(formatKoreanMoneyExact(baseIncludedWon))}) 이하이므로 {hi('추가 주거비 인정은 없습니다')}.
+              {regionText} {familyCountText}인 가구 기준 거주(추가생계비) 인정 한도는 월 {hi(formatKoreanMoneyExact(addLimitWon))}입니다.
+              입력하신 월세({hi(formatKoreanMoneyExact(rentWon))})가 이미 최저생계비에 반영된 주거비({hi(formatKoreanMoneyExact(baseIncludedWon))}) 이하이므로, {hi('추가 주거비로 인정되는 금액은 없습니다')}.
             </>
           );
         } else if (rentWon <= totalLimitWon) {
-          deductionWon = rentWon - baseIncludedWon;
-          note = (
+          firstParagraph = (
             <>
-              월세({hi(formatKoreanMoneyExact(rentWon))})에서 기준 포함분({hi(formatKoreanMoneyExact(baseIncludedWon))})을 뺀 {hi(`${formatKoreanMoneyExact(deductionWon)}이 추가 주거비로 인정됩니다`)}. (총 인정 한도 내)
+              {regionText} {familyCountText}인 가구 기준 거주(추가생계비) 인정 한도는 월 {hi(formatKoreanMoneyExact(addLimitWon))}입니다.
+              이미 최저생계비에 반영된 {hi(formatKoreanMoneyExact(baseIncludedWon))}을 제외한 주거비 {hi(formatKoreanMoneyExact(deductionWon))} 전액을 본 진단결과에 포함하였습니다.
             </>
           );
         } else {
-          deductionWon = addLimitWon;
-          note = (
+          firstParagraph = (
             <>
-              월세({hi(formatKoreanMoneyExact(rentWon))})가 주거비 총 인정 한도({hi(formatKoreanMoneyExact(totalLimitWon))})를 초과하여, 추가 주거비는 {hi(`한도인 ${formatKoreanMoneyExact(addLimitWon)}까지만 인정됩니다`)}.
+              {regionText} {familyCountText}인 가구 기준 거주(추가생계비) 인정 한도는 월 {hi(formatKoreanMoneyExact(addLimitWon))}입니다.
+              입력하신 월세({hi(formatKoreanMoneyExact(rentWon))})가 주거비 총 인정 한도({hi(formatKoreanMoneyExact(totalLimitWon))})를 초과하여, 추가 주거비는 {hi(`한도인 ${formatKoreanMoneyExact(addLimitWon)}까지만`)} 본 진단결과에 포함되었습니다.
             </>
           );
         }
+
+        const note = (
+          <>
+            {firstParagraph}
+            <br /><br />
+            따라서 본 진단은 {familyCountText}인 가구 최저생계비 {hi(formatKoreanMoneyExact(livingExpenseWon))} + 주거(추가생계비) {hi(formatKoreanMoneyExact(deductionWon))}을 더한 월 {hi(formatKoreanMoneyExact(totalLivingWon))}의 생계비 기준으로 산정되었습니다.
+            <br /><br />
+            다만, 주거(추가생계비)는 낮은 변제율, 사용처 등 법원의 판단에 따라 인정 여부와 금액이 달라질 수 있으므로, 전액 인정된다는 보장은 없습니다.
+          </>
+        );
+
         return {
-          title: '주거비 인정 내역',
+          title: housingTitle,
           items: [
             ['주거비 기준 포함분 (최저생계비 내)', formatKoreanMoneyExact(baseIncludedWon)],
             ['추가 주거비 인정 한도', formatKoreanMoneyExact(addLimitWon)],

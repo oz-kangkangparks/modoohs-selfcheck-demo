@@ -336,7 +336,7 @@ const questions = [
         label: '주거 형태',
         options: [
           { value: '자가', label: '자가 또는 공동명의' },
-          { value: '전세', label: '전세' },
+          { value: '전세', label: '본인명의전세' },
           { value: '월세', label: '월세' },
           { value: '기타', label: '기타(가족·지인 무상거주)' },
         ],
