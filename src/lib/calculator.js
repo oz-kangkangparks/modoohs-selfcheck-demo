@@ -32,6 +32,39 @@ export const LIVING_EXPENSE_TABLE = {
   4: 3_896_843,
 };
 
+/** 고소득자 판정 기준 — 본인 합산 월소득 "초과" 시 고소득자 (배우자 소득 제외) */
+export const HIGH_INCOME_THRESHOLD = {
+  1: 3_846_357,
+  2: 6_298_938,
+  3: 8_038_554,
+  4: 9_742_107,
+};
+
+/** 고소득자용 최저생계비 — 추가 공제(의료·교육)의 한도 산정 기준 */
+export const HIGH_INCOME_LIVING_TABLE = {
+  1: 2_564_238,
+  2: 4_199_292,
+  3: 5_359_036,
+  4: 6_494_738,
+};
+
+/** 가구원 수별 의료비 기준포함분 (최저생계비에 이미 포함된 의료비) */
+export const MEDICAL_BASE_INCLUDED = {
+  1: 64_619,
+  2: 105_822,
+  3: 135_048,
+  4: 163_667,
+};
+
+/** 자녀 1인당 교육비 기준포함분 (최저생계비에 이미 포함된 교육비) */
+export const EDUCATION_BASE_PER_CHILD = 89_627;
+/** 자녀 1인당 추가 인정 교육비 한도 (장애 없음) */
+export const EDUCATION_EXTRA_LIMIT_NORMAL = 200_000;
+/** 자녀 1인당 추가 인정 교육비 한도 (장애 있음) */
+export const EDUCATION_EXTRA_LIMIT_DISABLED = 500_000;
+/** 자녀 입력 최대 인원 (담당자 지시: 4명까지) */
+export const MAX_CHILDREN_INPUT = 4;
+
 /** 압류금지채권 공제 한도 (원) — 민사집행법 제246조 / 섹션 3-6 */
 export const DEPOSIT_INSURANCE_EXEMPT = 2_500_000;
 
@@ -160,7 +193,7 @@ export function calcHousingDeduction({ housingType, monthlyRent, residenceSido, 
 // ================================================================
 
 /**
- * 월 가용소득 = 월소득 − 최저생계비 − 월세추가공제 − 양육비
+ * 월 가용소득 = 월소득 − 최저생계비 − 월세추가공제 − 양육비 − (고소득자) 추가공제(의료·교육)
  * - 가용소득이 음수라도 **그대로 반환** (0 처리 금지 — 섹션 2-3)
  * - 양육비 지급(중)·지급하지 못함(법원 의무 발생)은 최저생계비에 포함되어 반영됨
  */
@@ -170,6 +203,7 @@ export function calcDisposableIncome({
   familyCount,
   housingDeduction = 0,
   childSupportExpense = 0,
+  extraDeduction = 0,
 }) {
   // incomeType은 배열(다중 선택). 구버전 문자열 호환 위해 정규화.
   const types = Array.isArray(incomeType) ? incomeType : incomeType ? [incomeType] : [];
@@ -177,7 +211,115 @@ export function calcDisposableIncome({
   const income = isJobless ? 0 : Number(monthlyIncome) || 0;
 
   const livingExpense = calcLivingExpense(familyCount);
-  return income - livingExpense - (housingDeduction || 0) - (Number(childSupportExpense) || 0);
+  return income
+    - livingExpense
+    - (housingDeduction || 0)
+    - (Number(childSupportExpense) || 0)
+    - (Number(extraDeduction) || 0);
+}
+
+/**
+ * 고소득자 판정 — 본인 합산 월소득(배우자 제외)이 가구원 수별 기준선을 "초과"하면 true
+ * @param {object} args
+ * @param {number} args.monthlyIncomeWon - 본인 합산 월소득 (원 단위)
+ * @param {number} args.familyCount - 부양가족 수 (본인 포함)
+ * @returns {boolean}
+ */
+export function calcHighIncomeStatus({ monthlyIncomeWon, familyCount }) {
+  const income = Number(monthlyIncomeWon) || 0;
+  if (income <= 0) return false;
+  const fc = Math.max(1, Math.min(4, Math.floor(Number(familyCount) || 1)));
+  const threshold = HIGH_INCOME_THRESHOLD[fc];
+  return income > threshold;
+}
+
+/**
+ * 자녀별 인정 교육비 합계 (원 단위, 고소득자 전용)
+ * - 자녀당 입력 교육비를 한도(장애 없음 20만원 / 장애 있음 50만원)로 클램핑하여 합산
+ * - children: [{ monthlyEducationWon, hasDisability }]
+ * - 비고소득자는 호출자가 0으로 처리
+ */
+export function calcChildrenEducation(children = []) {
+  if (!Array.isArray(children) || children.length === 0) return 0;
+  let sum = 0;
+  for (const c of children) {
+    const monthly = Math.max(0, Number(c?.monthlyEducationWon) || 0);
+    const limit = c?.hasDisability ? EDUCATION_EXTRA_LIMIT_DISABLED : EDUCATION_EXTRA_LIMIT_NORMAL;
+    sum += Math.min(monthly, limit);
+  }
+  return sum;
+}
+
+/**
+ * 의료비 추가 공제 (원 단위, 고소득자 전용)
+ * - 입력 월평균 의료비 − 가구원 수별 기준포함분 (음수 0)
+ * - 한도 없음 (단, 호출자에서 고소득자 추가 인정 한도로 클램핑)
+ */
+export function calcMedicalDeduction({ monthlyMedicalWon, familyCount }) {
+  const monthly = Math.max(0, Number(monthlyMedicalWon) || 0);
+  if (monthly === 0) return 0;
+  const fc = Math.max(1, Math.min(4, Math.floor(Number(familyCount) || 1)));
+  const included = MEDICAL_BASE_INCLUDED[fc];
+  return Math.max(0, monthly - included);
+}
+
+/**
+ * 고소득자 추가 공제 (의료비 + 교육비)
+ * - 비고소득자: 모두 0 (이미 최저생계비에 포함되어 별도 공제 없음)
+ * - 고소득자: 의료+교육 합계, 단 한도(고소득자 최저생계비 − 기본 최저생계비)로 클램핑
+ *
+ * @returns {{
+ *   isHighIncome: boolean,
+ *   highIncomeLiving: number,
+ *   baseLiving: number,
+ *   cap: number,
+ *   educationRaw: number,
+ *   medicalRaw: number,
+ *   rawSum: number,
+ *   total: number,
+ *   capped: boolean,
+ * }}
+ */
+export function calcExtraDeduction({
+  isHighIncome,
+  familyCount,
+  children = [],
+  monthlyMedicalWon = 0,
+}) {
+  const fc = Math.max(1, Math.min(4, Math.floor(Number(familyCount) || 1)));
+  const baseLiving = LIVING_EXPENSE_TABLE[fc];
+  const highIncomeLiving = HIGH_INCOME_LIVING_TABLE[fc];
+  const cap = Math.max(0, highIncomeLiving - baseLiving);
+
+  if (!isHighIncome) {
+    return {
+      isHighIncome: false,
+      highIncomeLiving,
+      baseLiving,
+      cap,
+      educationRaw: 0,
+      medicalRaw: 0,
+      rawSum: 0,
+      total: 0,
+      capped: false,
+    };
+  }
+
+  const educationRaw = calcChildrenEducation(children);
+  const medicalRaw = calcMedicalDeduction({ monthlyMedicalWon, familyCount });
+  const rawSum = educationRaw + medicalRaw;
+  const total = Math.min(rawSum, cap);
+  return {
+    isHighIncome: true,
+    highIncomeLiving,
+    baseLiving,
+    cap,
+    educationRaw,
+    medicalRaw,
+    rawSum,
+    total,
+    capped: rawSum > cap,
+  };
 }
 
 /**
@@ -820,6 +962,37 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     childSupportAmount: answers.childSupportAmount,
   });
 
+  // 고소득자 판정 (본인 합산 월소득 vs 가구원 수별 기준선)
+  const _incomeTypesForHi = Array.isArray(answers.incomeType)
+    ? answers.incomeType
+    : answers.incomeType ? [answers.incomeType] : [];
+  const _isJoblessForHi = _incomeTypesForHi.length === 0
+    || (_incomeTypesForHi.length === 1 && _incomeTypesForHi[0] === '무직');
+  const monthlyIncomeWon = _isJoblessForHi ? 0 : manwonToWon(Number(answers.monthlyIncome) || 0);
+  const isHighIncome = calcHighIncomeStatus({ monthlyIncomeWon, familyCount });
+
+  // 자녀별 입력값 정규화 (최대 4명, 만원 → 원)
+  const childrenInput = [];
+  const childCount = Math.min(MAX_CHILDREN_INPUT, Math.max(0, Number(answers.minorChildren) || 0));
+  for (let i = 1; i <= childCount; i += 1) {
+    const eduManwon = Number(answers[`child${i}_monthlyEducation`]) || 0;
+    childrenInput.push({
+      monthlyEducationWon: manwonToWon(eduManwon),
+      hasDisability: answers[`child${i}_hasDisability`] === 'yes',
+    });
+  }
+
+  // 의료비 (월 평균, 만원 → 원)
+  const monthlyMedicalWon = manwonToWon(Number(answers.monthlyMedicalExpense) || 0);
+
+  // 고소득자 추가 공제 (의료 + 교육) — 비고소득자는 모두 0
+  const extraDeduction = calcExtraDeduction({
+    isHighIncome,
+    familyCount,
+    children: childrenInput,
+    monthlyMedicalWon,
+  });
+
   // 가용소득 (마이너스 허용)
   const disposableIncome = calcDisposableIncome({
     incomeType: answers.incomeType,
@@ -827,9 +1000,10 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     familyCount,
     housingDeduction,
     childSupportExpense,
+    extraDeduction: extraDeduction.total,
   });
 
-  // 관할 법원 — 거주지·직장지 중 회생법원 관할이 있으면 자동 우선 선택
+  // 관할 법원 — 거주지·근무지 중 회생법원 관할이 있으면 자동 우선 선택
   const court = resolveBestCourt({
     residenceSido: answers.residenceSido,
     residenceSigungu: answers.residenceSigungu,
@@ -922,8 +1096,18 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
   if (_otherCollateral.length > 0) {
     warnings.push({
       severity: 'warning',
-      title: '담보대출이 있어요 — 확인해주세요',
-      detail: `확인된 담보대출: ${_otherCollateral.join(', ')}. 이 대출들은 통상 해약환급금·청약금과 상계 처리되므로 신용채권에 포함되지 않으며, 회생 진행에도 큰 영향은 없습니다.`,
+      title: '기타 담보대출이 있어요 - 확인해주세요',
+      detail:
+        `진단 결과 확인된 담보대출 : ${_otherCollateral.join(', ')}\n` +
+        '보험 약관대출 및 청약 (담보)대출은 일반적인 채무로 보기 어렵습니다.\n' +
+        '이는 보험환급금 또는 청약금 등 본인이 환급받을 수 있는 금액의 한도 내에서 실행된 대출이므로, 통상 개인회생 절차에서 회생채권으로 진행하기 어렵습니다.\n' +
+        '\n' +
+        '주의사항\n' +
+        '가령, 동일한 보험사에 보험환급금이 존재하고 별도의 신용대출이 있는 경우, 보험사가 보험환급금과 신용대출을 상계하겠다고 주장할 수 있습니다.\n' +
+        '이 경우에도 회생절차상 보험사의 임의적인 자체 상계가 당연히 허용되는 것은 아니라는 점을 인지하셔야 합니다.\n' +
+        '\n' +
+        '또한 동일한 은행에 청약적금이 있고, 별도의 신용대출이 존재하는 경우에는 은행 내부 규정 및 약관에 따라 자동 상계가 이루어질 가능성이 있습니다.\n' +
+        '따라서 회생 신청 전 청약적금의 유지 또는 해약 여부는 반드시 전문가와 상담한 후 결정하시기 바랍니다.',
     });
   }
 
@@ -1713,6 +1897,18 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     });
   }
 
+  // ---------- 조건부 개시 결정 가능성 판정 (급여 소득자 전용) ----------
+  // 현 직장 근무 1년 미만(1to6 또는 7to12) AND 과거 소득 대비 40% 이상 감소(down40 또는 down50)
+  // AND 종전 직장 사직 사유가 단순 이직(job_change)인 경우
+  const _incomeTypes = Array.isArray(answers.incomeType)
+    ? answers.incomeType
+    : answers.incomeType ? [answers.incomeType] : [];
+  const _isSalary = _incomeTypes.includes('급여');
+  const conditionalApproval = _isSalary
+    && ['1to6', '7to12'].includes(answers.salaryTenure)
+    && ['down40', 'down50'].includes(answers.pastIncomeChange)
+    && answers.previousJobLeaveReason === 'job_change';
+
   return {
     scenarioLabel: jeonseLienOverride
       ? (jeonseLienOverride === 'yes' ? '전세 질권설정 O' : '전세 질권설정 X')
@@ -1732,6 +1928,11 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     verdictTitle: verdictInfo.title,
     verdictDetail: verdictInfo.detail,
     paymentPlan,
+    conditionalApproval,
+    isHighIncome,
+    extraDeduction,
+    monthlyMedicalWon,
+    childrenInput,
     warnings,
     notices,
   };

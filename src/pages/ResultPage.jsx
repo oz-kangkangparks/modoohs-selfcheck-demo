@@ -124,8 +124,14 @@ export default function ResultPage() {
         {/* 모두AI — Gemini 기반 종합 총평 */}
         <ModuAISummary result={r} answers={a} />
 
+        {/* 자가진단 결과 안내문 (이미지 양식 반영) */}
+        <SelfCheckGuideCard result={r} answers={a} />
+
         {/* 주의 사항 */}
         {r.warnings && r.warnings.length > 0 && <WarningsCard warnings={r.warnings} />}
+
+        {/* 조건부 개시 결정 가능성 (급여 소득자 + 단기근속 + 소득 대폭 감소 + 단순 이직) */}
+        {r.conditionalApproval && <ConditionalApprovalCard />}
 
         {/* 법원 실무 안내 (가족 구성 기반) */}
         {r.notices && r.notices.length > 0 && <NoticesCard notices={r.notices} />}
@@ -157,8 +163,11 @@ export default function ResultPage() {
         {/* 분석 리포트 (자연어) */}
         <AnalysisReportCard result={r} />
 
-        {/* 안내문 */}
-        <DisclaimerCard />
+        {/* 개인회생 진행 절차 안내 — 펼침형 */}
+        <RehabProcessGuideCard />
+
+        {/* 채무증대 사유서(진술서) 작성 요령 — 펼침형 */}
+        <DebtCauseStatementTipCard result={r} />
 
         {/* 전문가 CTA */}
         <div className="result-cta-section">
@@ -198,7 +207,7 @@ function buildModuAISummaryData(result, answers) {
     return formatKoreanMoney(n * 10000);
   };
 
-  // 신청 가능한 관할법원 전체 리스트 (거주지·직장지 기반, 최대 4개)
+  // 신청 가능한 관할법원 전체 리스트 (거주지·근무지 기반, 최대 4개)
   const courtList = Array.isArray(r.court?.availableCourts) && r.court.availableCourts.length > 0
     ? r.court.availableCourts
     : (r.court?.courtName ? [r.court.courtName] : []);
@@ -388,7 +397,7 @@ function WarningsCard({ warnings }) {
             <div className="warning-item__badge" style={{ background: s.border }}>{s.icon}</div>
             <div className="warning-item__body">
               <div className="warning-item__title" style={{ color: s.color }}>{w.title}</div>
-              <div className="warning-item__detail">{w.detail}</div>
+              <div className="warning-item__detail" style={{ whiteSpace: 'pre-line' }}>{w.detail}</div>
             </div>
           </div>
         );
@@ -402,6 +411,141 @@ const SEVERITY_STYLE = {
   warning: { bg: 'rgba(245,158,11,0.10)', border: '#f59e0b', color: '#b45309', icon: '?' },
   info:    { bg: 'rgba(59,130,246,0.08)', border: '#3b82f6', color: '#1e40af', icon: 'i' },
 };
+
+
+// =========================================================================
+// 자가진단 결과 안내문 (담당자 이미지 양식 반영)
+//   - 자가진단 결과 안내문 / 예상 진단 결과 / 산정 반영 사유 / 유의사항
+// =========================================================================
+function SelfCheckGuideCard({ result, answers }) {
+  const p = result?.paymentPlan;
+  const creditDebt = result?.creditDebt || 0;
+
+  // 변제율·감면율 — 구버전 데이터 호환 즉석 계산
+  const repaymentRate = Number.isFinite(p?.repaymentRate)
+    ? p.repaymentRate
+    : (creditDebt > 0 && p?.totalPayment ? Math.min(1, p.totalPayment / creditDebt) : 0);
+  const exemptionRate = Number.isFinite(p?.exemptionRate)
+    ? p.exemptionRate
+    : (creditDebt > 0 && p?.totalPayment ? Math.max(0, 1 - p.totalPayment / creditDebt) : 0);
+
+  // 산정 반영 사유 — 입력된 인정 항목들 동적 수집
+  const reflectedItems = [];
+  const eduInput = (() => {
+    const n = Math.min(4, Number(answers?.minorChildren) || 0);
+    for (let i = 1; i <= n; i += 1) {
+      if (Number(answers?.[`child${i}_monthlyEducation`]) > 0) return true;
+    }
+    return false;
+  })();
+  if (eduInput) reflectedItems.push('교육비');
+  if (Number(result?.housingDeduction) > 0) reflectedItems.push('주거비');
+  if (Number(answers?.monthlyMedicalExpense) > 0) reflectedItems.push('의료비(병원비)');
+  const reflectedText = reflectedItems.length > 0 ? reflectedItems.join(', ') : '없음';
+
+  const sectionTitleStyle = {
+    color: 'var(--c-primary)',
+    fontWeight: 800,
+    fontSize: 15,
+    marginBottom: 8,
+    marginTop: 18,
+  };
+
+  return (
+    <div className="card">
+      <div style={{ ...sectionTitleStyle, marginTop: 0 }}>자가진단 결과 안내문</div>
+      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.8, color: 'var(--c-text-secondary)', wordBreak: 'keep-all' }}>
+        귀하의 자가진단 결과는 입력하신 내용을 바탕으로 산출된 예상 결과이며, 실제 사건 진행 시
+        법원 판단, 제출자료, 소명 정도, 추가생계비 인정 여부 등에 따라 달라질 수 있습니다.
+        따라서, 본 결과는 참고용으로만 확인하시고, 정확한 절차 진행을 위해서는 반드시 전문가의
+        도움을 받으셔야 합니다.
+      </p>
+
+      <div style={sectionTitleStyle}>예상 진단 결과</div>
+      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.8, color: 'var(--c-text-secondary)', wordBreak: 'keep-all' }}>
+        귀하께서는 예상 변제율{' '}
+        <strong style={{ color: 'var(--c-text-primary)' }}>
+          {(repaymentRate * 100).toFixed(1)}%
+        </strong>
+        , 감면율{' '}
+        <strong style={{ color: '#10b981' }}>
+          {(exemptionRate * 100).toFixed(1)}%
+        </strong>
+        에 해당하는 것으로 판단됩니다.
+      </p>
+
+      <div style={sectionTitleStyle}>산정 반영 사유</div>
+      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.8, color: 'var(--c-text-secondary)', wordBreak: 'keep-all' }}>
+        위 결과는 귀하가 입력하신 내용 중 인정 가능한{' '}
+        <strong style={{ color: 'var(--c-text-primary)' }}>
+          {reflectedText}
+        </strong>{' '}
+        해당 항목이 반영되어 산출된 것입니다.
+      </p>
+
+      <div style={sectionTitleStyle}>유의사항</div>
+      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.8, color: 'var(--c-text-secondary)', wordBreak: 'keep-all' }}>
+        추가생계비 항목인 교육비, 의료비, 주거비 등은 실제 지출 여부와 소명 자료 제출 가능성에
+        따라 인정 범위가 달라질 수 있으므로, 최종 결과는 전문가 검토 후 달라질 수 있습니다.
+      </p>
+    </div>
+  );
+}
+
+
+// =========================================================================
+// 조건부 개시 결정 가능성 안내
+// (급여 소득자 + 현 직장 1년 미만 + 과거 소득 40% 이상 감소 + 단순 이직)
+// =========================================================================
+function ConditionalApprovalCard() {
+  return (
+    <div className="card" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.25)' }}>
+      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14, color: '#1e40af' }}>
+        📌 조건부 개시 결정 가능성 안내
+      </div>
+
+      <div style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--c-text-secondary)', wordBreak: 'keep-all' }}>
+        <div style={{ fontWeight: 700, color: 'var(--c-text-primary)', marginBottom: 6 }}>
+          [조건부 결정 리포트 요약]
+        </div>
+        <p style={{ marginTop: 0 }}>
+          귀하는 현 직장으로 이직한 시점이 1개월~12개월 미만이고, 종전 직장 대비 소득이 대폭 감소한
+          경우이며, 퇴사 사유 또한 단순 이직이라면 실무상 법원에서는 향후 소득 증가 될 가능성을
+          고려하여 심사할 수 있고, 특히 채무자의 경력, 직무 내용, 기존 소득 수준 등을 종합적으로
+          보아 장래 소득이 다시 증가할 가능성이 있다고 판단되는 경우, 아래와 같이 조건부 개시 결정이
+          이루어질 수 있음을 인지하셔야 합니다.
+        </p>
+
+        <div style={{ fontWeight: 700, color: 'var(--c-text-primary)', marginTop: 18, marginBottom: 6 }}>
+          [조건부 개시 결정은 법원에서 다음같이 처리함]
+        </div>
+        <p style={{ marginTop: 0 }}>
+          변제계획안 10항 기타사항란에 다음 사항을 추가 기재 됩니다.
+        </p>
+
+        <ol style={{ paddingLeft: 20, margin: '8px 0 0 0' }}>
+          <li style={{ marginBottom: 10 }}>
+            채무자는 인가 결정 이후 월 평균수입이 변제계획에서 정한 월 평균 수입과 비교하여
+            <strong> 20% 이상 증가</strong>한 경우에는 1개월 내에 그 변동 내역을 신고하고
+            관련 자료를 함께 제출한다.
+          </li>
+          <li style={{ marginBottom: 10 }}>
+            20% 이상 소득 증가가 있으면 <strong>증가 된 소득의 50%를 소득으로 반영한 변제계획(안)</strong>을
+            제출한다.
+          </li>
+          <li style={{ marginBottom: 10 }}>
+            위 각 의무를 해태 할 경우에는 <strong>개인회생 절차가 폐지</strong>됨을 확인한다.
+          </li>
+        </ol>
+
+        <p style={{ marginTop: 14, marginBottom: 0 }}>
+          위 내용에 따라 20% 이상 소득 증가가 없다면 보고의 의무는 없으나, 소득이 증가 되었을
+          경우 반드시 <strong>변제계획을 변경하여 법원에 제출</strong>하여야 합니다.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 
 // =========================================================================
@@ -446,12 +590,20 @@ function PaymentPlanCard({ result, answers }) {
   const p = result.paymentPlan;
   const creditDebt = result.creditDebt;
 
-  // 계산 기준 정보 — 월 소득 / 부양가족 수 / 최저생계비
+  // 계산 기준 정보 — 월 소득 / 부양가족 수 / 최저생계비(+ 추가생계비)
   const monthlyIncomeWon = manwonToWon(Number(answers?.monthlyIncome) || 0);
   const familyCountText = Number.isFinite(result.familyCount)
     ? `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}명`
     : '-';
-  const livingExpenseWon = Number(result.livingExpense) || 0;
+  const baseLivingExpenseWon = Number(result.livingExpense) || 0;
+  const housingDeductionWon = Number(result.housingDeduction) || 0;
+  const childSupportExpenseWon = Number(result.childSupportExpense) || 0;
+  const extraDeductionWon = Number(result.extraDeduction?.total) || 0;
+  const extraLivingWon = housingDeductionWon + childSupportExpenseWon + extraDeductionWon;
+  const livingExpenseWon = baseLivingExpenseWon + extraLivingWon;
+  const livingExpenseSubtext = extraLivingWon > 0
+    ? `기본 ${formatKoreanMoney(baseLivingExpenseWon)} + 추가 ${formatKoreanMoney(extraLivingWon)}`
+    : null;
 
   // 구버전 저장 데이터 방어 — repaymentRate/exemptionRate 없으면 즉석 계산
   const repaymentRate = Number.isFinite(p.repaymentRate)
@@ -521,7 +673,12 @@ function PaymentPlanCard({ result, answers }) {
         <MetricCard label="부양가족 수"  value={familyCountText}                      color="var(--c-text-primary)" />
       </div>
       <div className="metric-row metric-row--primary">
-        <MetricCard label="최저생계비"  value={formatKoreanMoney(livingExpenseWon)}  color="var(--c-primary)" />
+        <MetricCard
+          label="최저생계비"
+          value={formatKoreanMoney(livingExpenseWon)}
+          subtext={livingExpenseSubtext}
+          color="var(--c-primary)"
+        />
         <MetricCard
           label="월 변제금"
           value={formatKoreanMoney(p.monthlyPayment)}
@@ -1057,7 +1214,7 @@ function InputSummaryCards({ answers, result, onEdit }) {
       editId: 'regionGroup',
       rows: [
         ['거주지', a.residenceSido ? `${a.residenceSido} ${a.residenceSigungu || ''}` : '-'],
-        ['직장지', a.workSido ? `${a.workSido} ${a.workSigungu || ''}` : '거주지와 동일'],
+        ['근무지', a.workSido ? `${a.workSido} ${a.workSigungu || ''}` : '거주지와 동일'],
         ['예상 관할 법원', formatCourtList(result.court)],
       ],
     },
@@ -1116,6 +1273,22 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ...(result.familyCount !== undefined
           ? [['부양가족 수 (본인 포함, 산정 결과)', `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}명`]]
           : []),
+        // 자녀별 교육비/장애 여부 (입력된 자녀 수만큼, 최대 4명)
+        ...(() => {
+          const n = Math.min(4, Number(a.minorChildren) || 0);
+          const out = [];
+          for (let i = 1; i <= n; i += 1) {
+            const eduKey = `child${i}_monthlyEducation`;
+            const disKey = `child${i}_hasDisability`;
+            if (a[eduKey] !== undefined && a[eduKey] !== '' && a[eduKey] !== null) {
+              out.push([`자녀 ${i} — 월 교육비`, money(eduKey)]);
+            }
+            if (a[disKey]) {
+              out.push([`자녀 ${i} — 장애 여부`, a[disKey] === 'yes' ? '예' : '아니오']);
+            }
+          }
+          return out;
+        })(),
       ],
     },
     {
@@ -1128,12 +1301,42 @@ function InputSummaryCards({ answers, result, onEdit }) {
           연금: '연금',
           무직: '소득 없음',
         };
+        const tenureLabelMap = {
+          '1to6': '1개월 ~ 6개월 사이',
+          '7to12': '7개월 ~ 12개월 사이',
+          '1y_plus': '1년 이상',
+          '2y_plus': '2년 이상',
+        };
+        const pastIncomeLabelMap = {
+          down20: '과거 소득보다 20% 이상 감소',
+          down30: '과거 소득보다 30% 이상 감소',
+          down40: '과거 소득보다 40% 이상 감소',
+          down50: '과거 소득보다 50% 이상 감소',
+          none: '해당없음',
+        };
+        const leaveReasonLabelMap = {
+          recommended_resignation: '권고사직',
+          company_closure: '직장 폐업으로 인한 실직',
+          health: '건강상의 이유로 사직함',
+          job_change: '단순 이직',
+          none: '해당없음',
+        };
         const types = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
         const typeText = types.length === 0 ? '-' : types.map((t) => incomeLabelMap[t] || t).join(', ');
         const onlyJobless = types.length === 1 && types[0] === '무직';
+        const isSalary = types.includes('급여');
         return [
           ['소득 유형', typeText],
           ...(onlyJobless ? [] : [['월 총 소득 (합산)', money('monthlyIncome')]]),
+          ...(isSalary && a.salaryTenure
+            ? [['현 직장 근무 기간', tenureLabelMap[a.salaryTenure] || a.salaryTenure]]
+            : []),
+          ...(isSalary && a.pastIncomeChange
+            ? [['현재 vs 과거 소득 비교', pastIncomeLabelMap[a.pastIncomeChange] || a.pastIncomeChange]]
+            : []),
+          ...(isSalary && a.previousJobLeaveReason
+            ? [['종전 직장 사직 사유', leaveReasonLabelMap[a.previousJobLeaveReason] || a.previousJobLeaveReason]]
+            : []),
         ];
       })(),
     },
@@ -1335,6 +1538,13 @@ function InputSummaryCards({ answers, result, onEdit }) {
       ],
     },
     {
+      title: '월 평균 의료비',
+      editId: 'monthlyMedicalExpense',
+      rows: [
+        ['월 평균 의료비 (지속 지출)', money('monthlyMedicalExpense')],
+      ],
+    },
+    {
       title: '채무 발생 주요 원인',
       editId: 'debtCauses',
       rows: [
@@ -1523,7 +1733,7 @@ function formatCodeList(values, labels) {
 
 function formatCourtList(court) {
   if (!court) return '-';
-  // 신규: 거주지·직장지 모두 고려한 전체 리스트 (회생법원 먼저 정렬)
+  // 신규: 거주지·근무지 모두 고려한 전체 리스트 (회생법원 먼저 정렬)
   if (Array.isArray(court.availableCourts) && court.availableCourts.length > 0) {
     return court.availableCourts.join('\n');
   }
@@ -1650,19 +1860,497 @@ function AnalysisReportCard({ result }) {
 // =========================================================================
 // 안내문 (.card 일관 사용)
 // =========================================================================
-function DisclaimerCard() {
+// =========================================================================
+// 개인회생 진행 절차 안내 — 펼침형 안내 카드
+// =========================================================================
+function RehabProcessGuideCard() {
+  const [open, setOpen] = useState(false);
+
+  const steps = [
+    {
+      no: '➀',
+      title: '회생 서류 준비',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            개인회생의 첫 시작은 내 소득, 재산, 채무, 가족관계 등 각종 서류를 준비하고 정리하는
+            단계입니다. 이때 준비하는 서류는 단순히 제출용이 아니라, 법원이 "이 사람이 정말
+            회생이 필요한지", "매월 얼마를 변제할 수 있는지"를 판단하는 자료가 됩니다.
+          </p>
+          <p>
+            보통 준비하는 자료는 다음과 같습니다.<br />
+            채무내역, 급여자료, 재산자료, 금융거래내역, 보험관련 자료, 각종 계약서 등입니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            쉽게 말하면, 현재 빚이 얼마인지, 수입은 얼마인지, 가진 재산은 무엇인지, 매월 얼마를
+            갚을 수 있는지 확인하는 단계입니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '➁',
+      title: '회생 접수 및 사건번호 부여',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            서류가 준비되면 관할법원에 개인회생 신청서를 접수합니다.
+            접수가 되면 법원에서 사건번호가 부여됩니다.
+            예를 들면, 2026개회○○○○○호 이런 식입니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            사건번호가 나오면 이제부터는 단순 상담 단계가 아니라, 법원 절차가 공식적으로 시작된
+            상태라고 보면 됩니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '➂',
+      title: '금지명령 또는 중지명령 결정',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            개인회생을 신청하면 많은분들이 가장 먼저 기대하는 부분이 바로 추심과 독촉 중단입니다.
+            법원에서 금지명령이 나오면 채권자는 더 이상 추심과 독촉 등을 할 수 없습니다.
+            이미 급여압류, 통장압류, 경매 등이 진행 중인 경우에는 사안에 따라 중지명령을
+            신청할 수 있습니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            쉽게 말하면, 금지명령은 앞으로의 추심과 독촉을 막는 것이고, 중지명령은 이미 진행 중인
+            강제집행을 중단하는 것입니다. 다만 모든 사건에서 반드시 나오는 것은 아니므로,
+            최근 대출이 많거나 사용처가 불리한 경우에는 법원의 판단을 기다려야 합니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '④',
+      title: '보정권고 처리',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            개인회생에서 가장 중요한 실무 단계 중 하나가 보정권고 처리입니다. 보정권고란 법원이
+            신청서를 검토한 뒤, [이 부분은 설명이 부족하다], [이 자료를 추가로 제출하라],
+            [대출 사용처를 더 구체적으로 밝혀라] 라고 요구하는 절차입니다.
+          </p>
+          <p>예를 들면 이런 내용이 나올 수 있습니다.</p>
+          <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+            <li>최근 대출금 사용처를 설명하라.</li>
+            <li>금융거래내역 중 OO 금액의 입출금 사유를 밝혀라.</li>
+            <li>보험환급금, 차량, 부동산 등 재산 가치를 다시 정리하라.</li>
+            <li>소득을 재산정 하라.</li>
+            <li>변제금액과 변제기간을 다시 산정하라.</li>
+          </ul>
+          <p style={{ marginBottom: 0 }}>
+            이 단계는 단순히 서류를 더 내는 것이 아니라, 법원이 궁금해하는 부분을 설득력 있게
+            설명하는 단계입니다. 보정권고를 잘 처리해야 개시 결정으로 넘어갈 수 있습니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '⑤',
+      title: '개시결정',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            보정권고까지 잘 처리되면 법원은 개인회생 절차를 계속 진행할지 판단합니다.
+            이때 나오는 결정이 개시 결정입니다. 개시 결정은 쉽게 말해, 이 사건은 개인회생
+            절차로 진행해볼 수 있다, 는 법원의 승인입니다. 개시 결정이 나왔다고 해서 모든
+            절차가 끝난 것은 아니지만, 회생 절차에서 매우 중요한 고비를 넘긴 것입니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            이후에는 채권자들에게 채권신고와 이의신청 기회가 주어지고, 변제계획안도 본격적으로
+            확정 단계로 들어갑니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '⑥',
+      title: '채권사 이의신청, 채권자 변경, 채권금액 정정 처리',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            개시 결정 이후에는 채권자들이 법원에 자신의 채권 내용을 신고하거나, 채무자가 제출한
+            채권 금액에 대해 이의를 제기할 수 있습니다.
+          </p>
+          <p>예를 들어,</p>
+          <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+            <li>채권 금액이 다르다.</li>
+            <li>이자가 더 있다.</li>
+            <li>채권자가 변경되었다.</li>
+            <li>기존 채권이 다른 회사로 양도되었다.</li>
+          </ul>
+          <p>
+            이 단계에서는 채권자목록과 변제계획안을 실제 채권 내용에 맞게 정리합니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            쉽게 말하면, 누구에게 얼마를 갚아야 하는지 최종적으로 맞춰가는 단계이며,
+            채권 금액이 변경되면 월 변제금이나 변제율에도 영향을 줄 수 있으므로 꼼꼼히
+            확인해야 합니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '⑦',
+      title: '채권자집회 참석',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            채권자집회는 개인회생 절차에서 정해진 날짜에 법원에 출석하는 절차입니다.
+            이름은 조금 무겁게 느껴지지만, 실제로는 대부분 법원에서 본인 확인을 하고,
+            변제계획에 대한 기본적인 확인을 하는 절차로 진행됩니다. 채권자가 직접 나오는 경우는
+            많지 않지만, 그렇지만 가볍게 보면 안 됩니다. 채무자는 정해진 날짜와 시간에 출석해야
+            하고, 특별한 사유 없이 불참하면 절차에 문제가 생길 수 있으며, 변제금미납이 되어
+            출석할 경우 인가 결정이 미뤄지거나 본 사건이 기각처리 될 수 있습니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            쉽게 말하면, 법원에 직접 가서 "앞으로 변제계획에 따라 성실히 갚겠습니다"라고
+            확인하는 단계입니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '⑧',
+      title: '인가결정',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            채권자집회까지 마치고 특별한 문제가 없으면 법원은 변제계획안을 최종적으로 승인합니다.
+            이 결정이 바로 인가 결정입니다. 인가 결정은 개인회생에서 가장 중요한 결정 중 하나입니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            쉽게 말하면, "이제 법원이 정한 변제계획대로 갚아가면 된다"는 최종 승인입니다.
+            인가 결정이 나면 채무자는 정해진 기간 동안 매월 변제금을 성실히 납부하면 됩니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '⑨',
+      title: '변제금 납부',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            통상 개시 결정 이후에는 정해진 변제계획에 따라 매월 변제금을 납부합니다.
+            이 단계에서 가장 중요한 것은 미납 없이 꾸준히 납부하는 것입니다.
+            개인회생은 한 번 인가를 받았다고 끝나는 것이 아니라, 실제로 변제기간 동안 성실히
+            납부해야 최종 면책으로 갈 수 있습니다. 만약 소득이 줄거나, 실직하거나, 질병 등으로
+            납부가 어려워지면 무조건 방치하지 말고 반드시 전문가와 상의해야 합니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            쉽게 말하면, 인가 결정은 출발선이고, 매월 성실히 납부하는 과정이 실제 회생의 핵심입니다.
+          </p>
+        </>
+      ),
+    },
+    {
+      no: '⑩',
+      title: '최종 면책신청',
+      body: (
+        <>
+          <p style={{ marginTop: 0 }}>
+            정해진 변제기간 동안 변제금을 모두 납부하면 마지막으로 면책신청을 합니다.
+            면책 결정이 나면 변제계획에 따라 갚고 남은 채무는 법적으로 책임을 면하게 됩니다.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            쉽게 말하면, 개인회생의 최종 목표는 인가 결정이 아니라 면책 결정입니다. 면책을
+            받아야 비로소 남은 채무에서 벗어나고, 경제적으로 다시 출발할 수 있는 기초가 마련됩니다.
+          </p>
+        </>
+      ),
+    },
+  ];
+
+  const summaryItems = [
+    '서류 준비 → 내 소득, 재산, 채무 등을 정리하는 시작 단계',
+    '회생 접수 및 사건번호 부여 → 법원 절차가 공식적으로 시작되는 단계',
+    '금지명령·중지명령 → 추심, 압류, 독촉 등을 막거나 멈추는 보호 단계',
+    '보정권고 처리 → 법원이 요구하는 부족한 설명과 자료를 보완하는 단계',
+    '개시 결정 → 법원이 회생 절차 진행을 승인하는 단계',
+    '채권자 이의신청 단계 → 채권자변동, 채권금액 수정, 각종 이의신청 등 최종 마무리하는 단계',
+    '채권자집회 참석 → 법원에 출석해 변제계획을 확인하는 단계',
+    '인가 결정 → 법원이 변제계획을 최종 승인하는 단계',
+    '면책 신청 → 남은 채무를 정리하고 새 출발을 하는 마지막 단계',
+  ];
+
   return (
-    <div className="card" style={{ background: 'var(--c-bg)' }}>
-      <div
+    <div className="card">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
         style={{
-          fontSize: 13, color: 'var(--c-text-tertiary)', lineHeight: 1.7,
-          wordBreak: 'keep-all',
+          width: '100%',
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          textAlign: 'left',
         }}
+        aria-expanded={open}
       >
-        ℹ️ 본 결과는 입력하신 정보를 바탕으로 한 참고용 자가진단이며 법적 효력이 없습니다.
-        실제 변제금액·면책금액·변제기간은 법원의 인가 결정·재산 재평가·추가 공제 반영 등에 따라 달라질 수 있으므로,
-        정확한 판단은 반드시 전문가 상담을 통해 확인하세요.
-      </div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--c-text-primary)' }}>
+          💡 <span style={{ color: 'var(--c-primary)', fontWeight: 900 }}>알아두면 좋아요</span> (개인회생 진행 절차 보기)
+        </div>
+        <div style={{ fontSize: 14, color: 'var(--c-text-tertiary)' }}>
+          {open ? '▲' : '▼'}
+        </div>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 14, fontSize: 14, lineHeight: 1.8, color: 'var(--c-text-secondary)', wordBreak: 'keep-all' }}>
+          <p style={{ marginTop: 0 }}>
+            개인회생은 한 번에 끝나는 절차가 아니라, 서류를 준비하고 → 법원에 접수하고 →
+            법원의 보정과 심사를 거쳐 → 변제계획을 확정받고 → 성실히 납부한 뒤 면책을 받는
+            과정입니다.
+          </p>
+          <p>알기 쉽게 아래와 같이 진행됩니다.</p>
+
+          {steps.map((s, i) => (
+            <div
+              key={i}
+              style={{
+                marginTop: 16,
+                paddingTop: 14,
+                borderTop: '1px dashed var(--c-border, #e5e7eb)',
+              }}
+            >
+              <div style={{ fontWeight: 700, color: 'var(--c-text-primary)', marginBottom: 6 }}>
+                {s.no} {s.title}
+              </div>
+              {s.body}
+            </div>
+          ))}
+
+          <div
+            style={{
+              marginTop: 22,
+              paddingTop: 16,
+              borderTop: '2px solid var(--c-border, #e5e7eb)',
+            }}
+          >
+            <div style={{ fontWeight: 700, color: 'var(--c-text-primary)', marginBottom: 8 }}>
+              한눈에 보는 흐름
+            </div>
+            <ul style={{ paddingLeft: 20, margin: 0 }}>
+              {summaryItems.map((item, i) => (
+                <li key={i} style={{ marginBottom: 6 }}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// =========================================================================
+// 채무증대 사유서(진술서) 작성 요령 — 펼침형 안내 카드
+// =========================================================================
+function DebtCauseStatementTipCard({ result }) {
+  const [open, setOpen] = useState(false);
+  const [sampleOpen, setSampleOpen] = useState(false);
+
+  // 1순위 회생법원 결정: court.rehab > availableCourts[0] > courtName
+  const court = result?.court || {};
+  const primaryCourt =
+    court.rehab ||
+    (Array.isArray(court.availableCourts) && court.availableCourts.length > 0
+      ? court.availableCourts[0]
+      : null) ||
+    court.courtName ||
+    '서울회생법원';
+
+  return (
+    <div className="card">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: '100%',
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          textAlign: 'left',
+        }}
+        aria-expanded={open}
+      >
+        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--c-text-primary)' }}>
+          💡 <span style={{ color: 'var(--c-primary)', fontWeight: 900 }}>알아두면 좋아요</span> (채무증대 사유서(진술서) 작성 요령 보기)
+        </div>
+        <div style={{ fontSize: 14, color: 'var(--c-text-tertiary)' }}>
+          {open ? '▲' : '▼'}
+        </div>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 14, fontSize: 14, lineHeight: 1.8, color: 'var(--c-text-secondary)', wordBreak: 'keep-all' }}>
+          <p style={{ marginTop: 0 }}>
+            ✓ 개인회생 신청 시 채무증대 사유서는 단순히 "빚이 늘어났다"는 내용을 적는 서류가 아닙니다.
+            법원은 이 서류를 통해 채무가 발생하게 된 경위, 대출금 사용처, 현재 변제 의지를 함께 확인합니다.
+          </p>
+
+          <div style={{ fontWeight: 700, color: 'var(--c-text-primary)', marginTop: 18, marginBottom: 6 }}>
+            ➀ 작성 요령
+          </div>
+          <p>채무증대 사유서는 아래 흐름으로 작성하는 것이 좋습니다.</p>
+
+          <p>
+            <strong>첫째, 채무가 발생한 시작점을 설명합니다.</strong><br />
+            생활비 부족, 사업 실패, 실직, 소득 감소, 질병, 가족 부양, 보증채무, 사기 피해, 투자 등
+            채무가 발생하게 된 최초 원인을 구체적으로 작성합니다.
+          </p>
+
+          <p>
+            <strong>둘째, 대출금의 사용처를 명확히 기재합니다.</strong><br />
+            대출금이 생활비, 기존 채무 변제, 병원비, 사업 운영비, 임대료, 교육비 등 어디에 사용되었는지
+            구분하여 작성해야 합니다. 특히 최근 대출금은 법원에서 사용처를 엄격히 확인할 수 있으므로
+            가능한 범위에서 객관적인 자료와 함께 정리하는 것이 좋습니다.
+          </p>
+
+          <p>
+            <strong>셋째, 채무가 계속 증가한 이유를 설명합니다.</strong><br />
+            소득보다 지출이 많았던 사정, 이자 부담, 카드 돌려막기, 기존 대출 상환을 위한 추가 대출 등
+            채무가 누적된 과정을 자연스럽게 작성합니다.<br />
+            <span style={{ color: 'var(--c-text-tertiary)' }}>
+              * 비록 대출금 사용처가 낭비, 도박이라도 명확히 기재하는 것이 중요합니다.
+            </span>
+          </p>
+
+          <p>
+            <strong>넷째, 현재 상황과 변제 의지를 밝힙니다.</strong><br />
+            현재 소득, 부양가족, 가계지출 구조를 설명하고, 회생절차를 통해 가능한 범위에서
+            성실히 변제하겠다는 의지를 기재합니다.
+          </p>
+
+          <div style={{ fontWeight: 700, color: 'var(--c-text-primary)', marginTop: 18, marginBottom: 6 }}>
+            ➁ 작성 시 주의할 점
+          </div>
+          <p>
+            채무증대 사유서는 감정적인 호소보다 사실관계 중심으로 작성하는 것이 매우 중요합니다.
+            또한, 대출금 사용처가 불명확하거나 도박, 주식, 코인, 과소비 등으로 확인되는 경우에는
+            법원에서 변제 기간 연장 또는 구체적인 소명 절차가 있으므로, 사실을 숨기기보다 경위와 반성,
+            재발 방지 의지를 구체적으로 함께 기재하는 것이 바람직합니다.
+          </p>
+
+          {/* 샘플 진술서 — 중첩 토글 */}
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px dashed var(--c-border, #e5e7eb)' }}>
+            <button
+              type="button"
+              onClick={() => setSampleOpen((v) => !v)}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                textAlign: 'left',
+              }}
+              aria-expanded={sampleOpen}
+            >
+              <div style={{ fontWeight: 700, color: 'var(--c-text-primary)' }}>
+                📄 샘플 — 채무증대 사유서
+              </div>
+              <div style={{ fontSize: 14, color: 'var(--c-text-tertiary)' }}>
+                {sampleOpen ? '▲' : '▼'}
+              </div>
+            </button>
+
+            {sampleOpen && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 16,
+                  background: 'var(--c-bg, #fafafa)',
+                  borderRadius: 8,
+                  fontSize: 14,
+                  lineHeight: 1.9,
+                  color: 'var(--c-text-secondary)',
+                  wordBreak: 'keep-all',
+                }}
+              >
+                <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 16, marginBottom: 18, color: 'var(--c-text-primary)' }}>
+                  채무증대 사유에 관한 진술서
+                </div>
+
+                <p style={{ marginTop: 0 }}>
+                  본인은 개인회생을 신청함에 있어, 채무가 증가하게 된 경위 중 일부가 생활비 부족이나
+                  기존 채무 변제뿐만 아니라, 부적절한 소비와 투자성 거래, 사행성 지출에서 비롯되었음을
+                  숨기지 않고 진술합니다.
+                </p>
+
+                <p>
+                  처음 채무가 발생한 주된 원인은 생활비 부족과 기존 대출금 상환 부담이었습니다.
+                  당시 본인의 소득만으로 월세, 공과금, 식비, 통신비, 가족 부양비 등 기본적인 생활비를
+                  감당하기 어려웠고, 부족한 금액을 신용카드와 대출로 보전하였습니다. 그러나 시간이
+                  지나면서 기존 대출의 원리금과 카드대금 상환 부담이 커졌고, 이를 갚기 위해 다시
+                  대출을 받는 악순환이 반복되었습니다.
+                </p>
+
+                <p>
+                  그 과정에서 경제적 압박을 벗어나고자 잘못된 판단을 하였습니다. 일부 대출금과 카드
+                  사용액을 주식, 가상자산 거래 또는 도박성 지출에 사용하였고, 단기간에 손실을 회복할
+                  수 있을 것이라는 안일한 생각으로 거래를 반복하였습니다. 처음에는 소액으로
+                  시작하였으나 손실이 발생하자 이를 만회하려는 마음이 커졌고, 결국, 더 큰 손실과
+                  채무 증가로 이어졌습니다.
+                </p>
+
+                <p>
+                  본인은 위와 같은 지출이 건전한 채무 발생 사유가 아니라는 점을 잘 알고 있습니다.
+                  특히, 회생절차에서 도박, 주식, 가상자산 거래 등은 법원에서 엄격하게 확인하는
+                  사항이지만, 이러한 사실을 은폐하지 않고, 대출금 사용처와 손실 경위를 성실히
+                  소명하고자 합니다.
+                </p>
+
+                <p>
+                  그리고 현재 본인은 위와 같은 행위를 모두 중단하였습니다. 더 이상 도박, 주식,
+                  가상자산 거래를 하지 않고 있으며, 관련 계정도 정리하고 있으며, 한국도박문제관리센터에서
+                  치유와 재활을 진행 중입니다. 앞으로는 추가 차입이나 신용카드 사용에 의존하지 않고,
+                  소득 범위 내에서 생활하며 법원이 정한 변제계획을 성실히 이행하겠습니다.
+                </p>
+
+                <p>
+                  이번 일을 통해 무리한 투자와 사행성 지출이 본인뿐만 아니라 가족의 생활까지
+                  어렵게 만든다는 사실을 깊이 깨달았습니다. 과거의 잘못된 판단을 진심으로 반성하고
+                  있으며, 회생절차를 단순히 채무를 감면받는 수단으로 생각하지 않고, 경제생활을
+                  정상화하기 위한 마지막 기회로 삼고자 합니다.
+                </p>
+
+                <p>
+                  이에 본인은 현재의 소득과 생활 여건 안에서 가능한 범위 내 최대한 성실히 변제할 것을
+                  다짐합니다. 다시 정상적인 경제생활로 복귀할 수 있도록 살펴주시기 바랍니다.
+                </p>
+
+                <div style={{ marginTop: 28, textAlign: 'center' }}>
+                  채무자 : 모두의 회생 (인)
+                </div>
+
+                <div style={{ marginTop: 24, textAlign: 'right', fontWeight: 700, color: 'var(--c-text-primary)' }}>
+                  {primaryCourt} 귀중
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

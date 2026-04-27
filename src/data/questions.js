@@ -45,7 +45,7 @@ const questions = [
   {
     id: 'regionGroup',
     type: 'composite',
-    title: '거주지와 직장지를 알려주세요',
+    title: '거주지와 근무지를 알려주세요',
     subtitle: '관할 회생법원을 자동으로 판별합니다',
     fields: [
       {
@@ -57,7 +57,7 @@ const questions = [
       },
       {
         subType: 'regionPicker',
-        label: '직장지 (거주지와 다르면 선택 입력)',
+        label: '근무지 (거주지와 다르면 선택 입력)',
         sidoField: 'workSido',
         sigunguField: 'workSigungu',
         fields: ['workSido', 'workSigungu'],
@@ -66,10 +66,10 @@ const questions = [
     ],
     helpCard: {
       title: '지역이 왜 필요한가요?',
-      easy: '거주지에 따라 관할 법원이 자동 판별되며, 일부 지역(양산 등)은 직장지에 따라 부산회생법원 선택이 가능합니다.',
+      easy: '거주지에 따라 관할 법원이 자동 판별되며, 일부 지역(양산 등)은 근무지에 따라 부산회생법원 선택이 가능합니다.',
       tip: '시 단위까지만 정확히 선택해주세요. 군 단위는 선택적이에요.',
     },
-    aiSuggestions: ['법원은 어디로 가야 하나요?', '직장지와 거주지가 다른데 어디 기준인가요?'],
+    aiSuggestions: ['법원은 어디로 가야 하나요?', '근무지와 거주지가 다른데 어디 기준인가요?'],
   },
 
   // =======================================================
@@ -81,14 +81,6 @@ const questions = [
     title: '가족 구성을 알려주세요',
     subtitle: '부양가족 수를 자동으로 산정해드립니다',
     fields: [
-      {
-        field: 'dependentParents',
-        subType: 'stepper',
-        label: '부모 부양',
-        hint: '연령보다 "실제 부양이 필요한 상태인지"가 기준입니다. 인정 요건·증빙 자료는 도움말을 참고하세요. (0~2명)',
-        min: 0,
-        max: 2,
-      },
       {
         field: 'maritalStatus',
         subType: 'select',
@@ -116,9 +108,90 @@ const questions = [
         field: 'minorChildren',
         subType: 'stepper',
         label: '자녀 부양',
-        hint: '성년 자녀는 포함하지 않습니다',
+        hint: '성년 자녀는 포함하지 않습니다 (교육비 추가 공제는 4명까지 인정)',
         min: 0,
         max: 10,
+      },
+      // ---------- 자녀별 교육비/장애 여부 (최대 4명, 고소득자 추가 공제 산정용) ----------
+      {
+        field: 'child1_monthlyEducation',
+        subType: 'money',
+        label: '자녀 1 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 1,
+      },
+      {
+        field: 'child1_hasDisability',
+        subType: 'select',
+        label: '자녀 1 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'no', label: '아니오' },
+          { value: 'yes', label: '예' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 1,
+      },
+      {
+        field: 'child2_monthlyEducation',
+        subType: 'money',
+        label: '자녀 2 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 2,
+      },
+      {
+        field: 'child2_hasDisability',
+        subType: 'select',
+        label: '자녀 2 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'no', label: '아니오' },
+          { value: 'yes', label: '예' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 2,
+      },
+      {
+        field: 'child3_monthlyEducation',
+        subType: 'money',
+        label: '자녀 3 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 3,
+      },
+      {
+        field: 'child3_hasDisability',
+        subType: 'select',
+        label: '자녀 3 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'no', label: '아니오' },
+          { value: 'yes', label: '예' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 3,
+      },
+      {
+        field: 'child4_monthlyEducation',
+        subType: 'money',
+        label: '자녀 4 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 4,
+      },
+      {
+        field: 'child4_hasDisability',
+        subType: 'select',
+        label: '자녀 4 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'no', label: '아니오' },
+          { value: 'yes', label: '예' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 4,
+      },
+      {
+        field: 'dependentParents',
+        subType: 'stepper',
+        label: '부모 부양',
+        hint: '연령보다 "실제 부양이 필요한 상태인지"가 기준입니다. 인정 요건·증빙 자료는 도움말을 참고하세요. (0~2명)',
+        min: 0,
+        max: 2,
       },
       // ---------- 이혼 + 미성년 자녀 → 양육비 ----------
       {
@@ -302,6 +375,58 @@ const questions = [
         showIf: (a) => {
           const t = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
           return t.length > 0 && !(t.length === 1 && t[0] === '무직');
+        },
+      },
+      // ---------- 급여 소득자 전용: 근무 기간 / 과거 소득 비교 / 종전 직장 사직 사유 ----------
+      {
+        field: 'salaryTenure',
+        subType: 'select',
+        label: '현 직장 근무 기간',
+        options: [
+          { value: '1to6', label: '1개월 ~ 6개월 사이' },
+          { value: '7to12', label: '7개월 ~ 12개월 사이' },
+          { value: '1y_plus', label: '1년 이상' },
+          { value: '2y_plus', label: '2년 이상' },
+        ],
+        columns: 2,
+        showIf: (a) => {
+          const t = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
+          return t.includes('급여');
+        },
+      },
+      {
+        field: 'pastIncomeChange',
+        subType: 'select',
+        label: '현재 vs 과거 소득 비교',
+        hint: '종전 직장(또는 과거 소득) 대비 현재 소득 변동을 선택해주세요',
+        options: [
+          { value: 'down20', label: '과거 소득보다 20% 이상 감소' },
+          { value: 'down30', label: '과거 소득보다 30% 이상 감소' },
+          { value: 'down40', label: '과거 소득보다 40% 이상 감소' },
+          { value: 'down50', label: '과거 소득보다 50% 이상 감소' },
+          { value: 'none', label: '해당없음' },
+        ],
+        columns: 1,
+        showIf: (a) => {
+          const t = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
+          return t.includes('급여');
+        },
+      },
+      {
+        field: 'previousJobLeaveReason',
+        subType: 'select',
+        label: '종전 직장을 그만두게 된 사정',
+        options: [
+          { value: 'recommended_resignation', label: '권고사직' },
+          { value: 'company_closure', label: '직장 폐업으로 인한 실직' },
+          { value: 'health', label: '건강상의 이유로 사직함' },
+          { value: 'job_change', label: '단순 이직' },
+          { value: 'none', label: '해당없음' },
+        ],
+        columns: 1,
+        showIf: (a) => {
+          const t = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
+          return t.includes('급여');
         },
       },
     ],
@@ -842,6 +967,34 @@ const questions = [
       tip: '"올크레딧", "나이스지키미" 같은 신용정보 서비스에서 내 대출·카드값 총액을 무료로 조회하실 수 있어요.',
     },
     aiSuggestions: ['담보대출이랑 신용대출 차이', '전세대출도 여기에 포함되나요?'],
+  },
+
+  // =======================================================
+  // 12-2. 월 평균 의료비 (고소득자 추가 공제 산정용)
+  // =======================================================
+  {
+    id: 'monthlyMedicalExpense',
+    type: 'money',
+    field: 'monthlyMedicalExpense',
+    title: '최근 1년 이내 지속적으로 발생한 월 평균 의료비를 입력해주세요',
+    subtitle:
+      '지속적이란 입원, 주기적 통원치료처럼 1~2회성이 아닌 정기 지출을 의미합니다. ' +
+      '본인·배우자·자녀·부모 등 부양가족 모두의 의료비 합계를 만원 단위로 입력해주세요.',
+    unit: '만원',
+    validation: { required: false, min: 0 },
+    helpCard: {
+      title: '의료비는 어떻게 인정되나요?',
+      easy:
+        '최근 1년간 지속적으로 발생한 의료비를 12로 나눈 월 평균 금액을 입력하면 됩니다. ' +
+        '병원 입원, 정기적인 통원·약 처방, 만성질환·자폐 등 지속 치료가 해당되며, ' +
+        '한두 번의 단발성 진료는 포함하지 않습니다.',
+      cases: [
+        { q: '의료비 합산 기준은?', a: '본인·배우자·자녀·부모 등 부양가족 전체의 월 평균 의료비 합계를 입력합니다.' },
+        { q: '왜 입력해야 하나요?', a: '고소득자에 해당하는 경우 의료비·교육비 등은 추가 인정 한도 내에서 가용소득에서 추가로 공제받을 수 있습니다.' },
+      ],
+      tip: '단순한 일반 진료비·감기약 구입비처럼 1~2회성 지출은 포함하지 않습니다.',
+    },
+    aiSuggestions: ['지속적인 의료비란 뭔가요?', '가족 의료비도 포함되나요?'],
   },
 
   // =======================================================

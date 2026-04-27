@@ -147,8 +147,8 @@ function courtsOfOneBase(sido, sigungu) {
 }
 
 /**
- * 거주지·직장지를 모두 고려한 신청 가능 법원 리스트
- *  - 거주지 법원 + 직장지 법원 합집합 (중복 제거)
+ * 거주지·근무지를 모두 고려한 신청 가능 법원 리스트
+ *  - 거주지 법원 + 근무지 법원 합집합 (중복 제거)
  *  - 정렬: 회생법원 먼저, 지방법원 뒤
  */
 export function resolveAvailableCourts({ residenceSido, residenceSigungu, workSido, workSigungu } = {}) {
@@ -166,7 +166,7 @@ export function resolveAvailableCourts({ residenceSido, residenceSigungu, workSi
 }
 
 /**
- * 거주지·직장지 중 "회생법원" 관할인 곳을 우선 선택
+ * 거주지·근무지 중 "회생법원" 관할인 곳을 우선 선택
  *  - 회생법원은 채무자에게 유리(24개월 단축 특례, 더 유연한 실무 처리 등)하므로
  *    둘 중 하나라도 회생법원 관할이면 그곳을 자동 선택한다.
  *  - 둘 다 회생법원이면 거주지 우선. 둘 다 지방법원이면 거주지 기준.
@@ -188,12 +188,12 @@ export function resolveBestCourt({ residenceSido, residenceSigungu, workSido, wo
     return { ...residenceCourt, basedOn: 'residence', availableCourts };
   }
 
-  // 직장지가 입력되지 않았으면 거주지 그대로
+  // 근무지가 입력되지 않았으면 거주지 그대로
   if (!workSido || !workSigungu) {
     return { ...residenceCourt, basedOn: 'residence', availableCourts };
   }
 
-  // 직장지가 회생법원이면 직장지 기준
+  // 근무지가 회생법원이면 근무지 기준
   const workCourt = resolveCourt(workSido, workSigungu);
   const workIsRehab = workCourt.recommended === 'rehab' && !!workCourt.rehab;
   if (workIsRehab) {
