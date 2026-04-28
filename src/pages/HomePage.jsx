@@ -46,9 +46,9 @@ export default function HomePage() {
       <div className="home-hero">
         <div style={{ textAlign: 'center' }}>
           <div className="home-hero__badge">누구나 무료로 3분 만에</div>
-          <h1 className="home-hero__title">
-            내 빚, <em>얼마나</em><br />
-            줄일 수 있을까요?
+          <h1 className="home-hero__title home-hero__title--solution">
+            <span className="home-hero__title-precision">초정밀</span>
+            <span className="home-hero__title-main">회생 진단 솔루션</span>
           </h1>
           <p className="home-hero__desc">
             복잡한 서류 없이, 클릭 몇 번으로<br />
