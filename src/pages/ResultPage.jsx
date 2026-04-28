@@ -12,7 +12,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { getDiagnosis } from '../lib/db';
 import { useDiagnosis } from '../hooks/useDiagnosis';
-import { formatKoreanMoney, manwonToWon, VERDICT } from '../lib/calculator';
+import {
+  formatKoreanMoney,
+  manwonToWon,
+  VERDICT,
+  MEDICAL_BASE_INCLUDED,
+  EDUCATION_EXTRA_LIMIT_NORMAL,
+  EDUCATION_EXTRA_LIMIT_DISABLED,
+} from '../lib/calculator';
 import {
   resolveJeonseExemption,
   resolveHousingGroup,
@@ -601,9 +608,32 @@ function PaymentPlanCard({ result, answers }) {
   const extraDeductionWon = Number(result.extraDeduction?.total) || 0;
   const extraLivingWon = housingDeductionWon + childSupportExpenseWon + extraDeductionWon;
   const livingExpenseWon = baseLivingExpenseWon + extraLivingWon;
-  const livingExpenseSubtext = extraLivingWon > 0
-    ? `기본 ${formatKoreanMoney(baseLivingExpenseWon)} + 추가 ${formatKoreanMoney(extraLivingWon)}`
-    : null;
+
+  // 최저생계비 구성요소 분해 — 0원 항목은 표시 생략
+  const ext = result.extraDeduction || {};
+  const extRawSum = Number(ext.rawSum) || 0;
+  const extCapped = !!ext.capped;
+  const medicalRawWon = Number(ext.medicalRaw) || 0;
+  const educationRawWon = Number(ext.educationRaw) || 0;
+  let medicalContribWon;
+  let educationContribWon;
+  if (extraDeductionWon === 0 || extRawSum === 0) {
+    medicalContribWon = 0;
+    educationContribWon = 0;
+  } else if (!extCapped) {
+    medicalContribWon = medicalRawWon;
+    educationContribWon = educationRawWon;
+  } else {
+    medicalContribWon = Math.round(extraDeductionWon * (medicalRawWon / extRawSum));
+    educationContribWon = extraDeductionWon - medicalContribWon;
+  }
+
+  const livingExpenseParts = [`기본생계비 ${formatKoreanMoney(baseLivingExpenseWon)}`];
+  if (housingDeductionWon > 0) livingExpenseParts.push(`거주 추가생계비 ${formatKoreanMoney(housingDeductionWon)}`);
+  if (childSupportExpenseWon > 0) livingExpenseParts.push(`양육비 ${formatKoreanMoney(childSupportExpenseWon)}`);
+  if (medicalContribWon > 0) livingExpenseParts.push(`병원비 ${formatKoreanMoney(medicalContribWon)}`);
+  if (educationContribWon > 0) livingExpenseParts.push(`교육비 ${formatKoreanMoney(educationContribWon)}`);
+  const livingExpenseSubtext = livingExpenseParts.length > 1 ? livingExpenseParts.join(' + ') : null;
 
   // 구버전 저장 데이터 방어 — repaymentRate/exemptionRate 없으면 즉석 계산
   const repaymentRate = Number.isFinite(p.repaymentRate)
@@ -1273,24 +1303,95 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ...(result.familyCount !== undefined
           ? [['부양가족 수 (본인 포함, 산정 결과)', `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}명`]]
           : []),
-        // 자녀별 교육비/장애 여부 (입력된 자녀 수만큼, 최대 4명)
-        ...(() => {
-          const n = Math.min(4, Number(a.minorChildren) || 0);
-          const out = [];
-          for (let i = 1; i <= n; i += 1) {
-            const eduKey = `child${i}_monthlyEducation`;
-            const disKey = `child${i}_hasDisability`;
-            if (a[eduKey] !== undefined && a[eduKey] !== '' && a[eduKey] !== null) {
-              out.push([`자녀 ${i} — 월 교육비`, money(eduKey)]);
-            }
-            if (a[disKey]) {
-              out.push([`자녀 ${i} — 장애 여부`, a[disKey] === 'yes' ? '예' : '아니오']);
-            }
-          }
-          return out;
-        })(),
       ],
     },
+    // ---------- 자녀 교육비 / 장애 여부 (미성년 자녀가 있을 때만 표시) ----------
+    ...((() => {
+      const n = Math.min(4, Number(a.minorChildren) || 0);
+      if (n === 0) return [];
+      const rows = [];
+      const childInputs = [];
+      for (let i = 1; i <= n; i += 1) {
+        const eduKey = `child${i}_monthlyEducation`;
+        const disKey = `child${i}_hasDisability`;
+        rows.push([`자녀 ${i} — 월 교육비`, money(eduKey)]);
+        if (a[disKey]) {
+          rows.push([`자녀 ${i} — 장애 여부`, a[disKey] === 'yes' ? '예' : '아니오']);
+        }
+        const eduWon = manwonToWon(Number(a[eduKey]) || 0);
+        const hasDisability = a[disKey] === 'yes';
+        const limit = hasDisability ? EDUCATION_EXTRA_LIMIT_DISABLED : EDUCATION_EXTRA_LIMIT_NORMAL;
+        const acceptedRaw = Math.min(eduWon, limit);
+        childInputs.push({ idx: i, eduWon, hasDisability, limit, acceptedRaw });
+      }
+
+      const referenceBlock = (() => {
+        const totalEduInputWon = childInputs.reduce((s, c) => s + c.eduWon, 0);
+        if (totalEduInputWon <= 0) return null;
+
+        const isHighIncome = !!result.isHighIncome;
+        const ext = result.extraDeduction || {};
+        const totalCapped = Number(ext.total) || 0;
+        const rawSum = Number(ext.rawSum) || 0;
+        const educationRawWon = Number(ext.educationRaw) || 0;
+        const capped = !!ext.capped;
+        let educationAccepted;
+        if (!isHighIncome) {
+          educationAccepted = 0;
+        } else if (!capped || rawSum === 0) {
+          educationAccepted = educationRawWon;
+        } else {
+          educationAccepted = totalCapped - Math.round(totalCapped * ((Number(ext.medicalRaw) || 0) / rawSum));
+        }
+
+        const hi = (text) => (
+          <span style={{ color: 'var(--c-primary)', fontWeight: 700 }}>{text}</span>
+        );
+
+        const items = childInputs.map((c) => [
+          `자녀 ${c.idx} 인정 한도${c.hasDisability ? ' (장애)' : ''}`,
+          formatKoreanMoneyExact(c.limit),
+        ]);
+        items.push(['입력한 월 교육비 합계', formatKoreanMoneyExact(totalEduInputWon)]);
+        items.push(['인정된 추가 교육비', formatKoreanMoneyExact(educationAccepted)]);
+
+        let note;
+        if (!isHighIncome) {
+          note = (
+            <>
+              자녀 1인당 추가 인정 교육비 한도는 월 {hi(formatKoreanMoneyExact(EDUCATION_EXTRA_LIMIT_NORMAL))}(장애 시 {hi(formatKoreanMoneyExact(EDUCATION_EXTRA_LIMIT_DISABLED))})입니다.
+              다만 입력하신 월 소득이 고소득자 기준에 해당하지 않으므로, 교육비는 이미 최저생계비에 반영된 범위에서 산정되며 {hi('추가 교육비로 인정되는 금액은 없습니다')}.
+            </>
+          );
+        } else if (capped && educationAccepted < educationRawWon) {
+          note = (
+            <>
+              자녀별 한도 내 합산 교육비 {hi(formatKoreanMoneyExact(educationRawWon))} 중, 의료비·교육비 추가 공제 합계가 고소득자 추가 인정 한도를 초과하여 {hi(formatKoreanMoneyExact(educationAccepted))}만큼이 본 진단결과에 포함되었습니다.
+            </>
+          );
+        } else {
+          note = (
+            <>
+              자녀 1인당 추가 인정 교육비 한도는 월 {hi(formatKoreanMoneyExact(EDUCATION_EXTRA_LIMIT_NORMAL))}(장애 시 {hi(formatKoreanMoneyExact(EDUCATION_EXTRA_LIMIT_DISABLED))})입니다.
+              자녀별 한도를 적용한 추가 교육비 {hi(formatKoreanMoneyExact(educationAccepted))}을 본 진단결과에 포함하였습니다.
+            </>
+          );
+        }
+
+        return {
+          title: '자녀 교육비 인정 내역',
+          items,
+          note,
+        };
+      })();
+
+      return [{
+        title: '자녀 교육비',
+        editId: 'familyGroup',
+        rows,
+        referenceBlock,
+      }];
+    })()),
     {
       title: '소득',
       editId: 'incomeGroup',
@@ -1543,6 +1644,76 @@ function InputSummaryCards({ answers, result, onEdit }) {
       rows: [
         ['월 평균 의료비 (지속 지출)', money('monthlyMedicalExpense')],
       ],
+      referenceBlock: (() => {
+        const monthlyMedicalManwon = Number(a.monthlyMedicalExpense) || 0;
+        if (monthlyMedicalManwon <= 0) return null;
+        const fc = Number.isFinite(result.familyCount)
+          ? Math.max(1, Math.min(4, Math.floor(result.familyCount)))
+          : 1;
+        const baseIncludedWon = MEDICAL_BASE_INCLUDED[fc] || 0;
+        const monthlyMedicalWon = manwonToWon(monthlyMedicalManwon);
+        const isHighIncome = !!result.isHighIncome;
+        const medicalRaw = Math.max(0, monthlyMedicalWon - baseIncludedWon);
+
+        const ext = result.extraDeduction || {};
+        const totalCapped = Number(ext.total) || 0;
+        const rawSum = Number(ext.rawSum) || 0;
+        const capped = !!ext.capped;
+        let medicalAccepted;
+        if (!isHighIncome) {
+          medicalAccepted = 0;
+        } else if (!capped || rawSum === 0) {
+          medicalAccepted = medicalRaw;
+        } else {
+          medicalAccepted = Math.round(totalCapped * (medicalRaw / rawSum));
+        }
+
+        const hi = (text) => (
+          <span style={{ color: 'var(--c-primary)', fontWeight: 700 }}>{text}</span>
+        );
+        const familyCountText = Number(fc).toFixed(1).replace(/\.0$/, '');
+
+        let note;
+        if (!isHighIncome) {
+          note = (
+            <>
+              {familyCountText}인 가구 기준 의료비 기준 포함분은 월 {hi(formatKoreanMoneyExact(baseIncludedWon))}입니다.
+              입력하신 월 평균 의료비({hi(formatKoreanMoneyExact(monthlyMedicalWon))})는 이미 최저생계비에 반영된 의료비 범위에서 산정되며, 고소득자 기준에 해당하지 않으므로 {hi('추가 의료비로 인정되는 금액은 없습니다')}.
+            </>
+          );
+        } else if (monthlyMedicalWon <= baseIncludedWon) {
+          note = (
+            <>
+              {familyCountText}인 가구 기준 의료비 기준 포함분은 월 {hi(formatKoreanMoneyExact(baseIncludedWon))}입니다.
+              입력하신 월 평균 의료비({hi(formatKoreanMoneyExact(monthlyMedicalWon))})가 이미 최저생계비에 반영된 의료비({hi(formatKoreanMoneyExact(baseIncludedWon))}) 이하이므로, {hi('추가 의료비로 인정되는 금액은 없습니다')}.
+            </>
+          );
+        } else if (capped && medicalAccepted < medicalRaw) {
+          note = (
+            <>
+              {familyCountText}인 가구 기준 의료비 기준 포함분은 월 {hi(formatKoreanMoneyExact(baseIncludedWon))}입니다.
+              이미 최저생계비에 반영된 {hi(formatKoreanMoneyExact(baseIncludedWon))}을 제외한 추가 의료비 {hi(formatKoreanMoneyExact(medicalRaw))} 중, 의료비·교육비 추가 공제 합계가 고소득자 추가 인정 한도를 초과하여 {hi(formatKoreanMoneyExact(medicalAccepted))}만큼이 본 진단결과에 포함되었습니다.
+            </>
+          );
+        } else {
+          note = (
+            <>
+              {familyCountText}인 가구 기준 의료비 기준 포함분은 월 {hi(formatKoreanMoneyExact(baseIncludedWon))}입니다.
+              이미 최저생계비에 반영된 {hi(formatKoreanMoneyExact(baseIncludedWon))}을 제외한 추가 의료비 {hi(formatKoreanMoneyExact(medicalAccepted))}을 본 진단결과에 포함하였습니다.
+            </>
+          );
+        }
+
+        return {
+          title: '의료비 인정 내역',
+          items: [
+            ['의료비 기준 포함분 (최저생계비 내)', formatKoreanMoneyExact(baseIncludedWon)],
+            ['입력한 월 평균 의료비', formatKoreanMoneyExact(monthlyMedicalWon)],
+            ['인정된 추가 의료비', formatKoreanMoneyExact(medicalAccepted)],
+          ],
+          note,
+        };
+      })(),
     },
     {
       title: '채무 발생 주요 원인',
