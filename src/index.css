@@ -902,7 +902,7 @@ body::after {
   color: var(--c-primary);
   font-weight: 800;
   border-radius: var(--radius-full);
-  margin-bottom: 24px;
+  margin-bottom: 10px;
   font-size: 14px;
 }
 .home-hero__title, .intro__title {
@@ -926,42 +926,37 @@ body::after {
   white-space: nowrap;
   margin-bottom: 24px;
 }
-.home-hero__title-precision {
-  font-size: 36px;
-  font-weight: 900;
-  letter-spacing: -1.2px;
-  color: var(--c-primary);
-}
+.home-hero__title-precision,
 .home-hero__title-main {
-  font-size: 36px;
+  font-size: 40px;
   font-weight: 900;
   line-height: 1.18;
-  letter-spacing: -1.2px;
-  background: linear-gradient(95deg, #1e3a8a 0%, #2563eb 35%, #6366f1 65%, #2563eb 100%);
-  background-size: 220% 100%;
-  background-position: 0% 50%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-  animation: heroTitleShimmer 7s ease-in-out infinite;
-}
-@keyframes heroTitleShimmer {
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .home-hero__title-main { animation: none; }
+  letter-spacing: -1.3px;
+  color: var(--c-primary);
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.40));
 }
 @media (max-width: 480px) {
   .home-hero__title--solution { gap: 8px; }
-  .home-hero__title-precision { font-size: 26px; letter-spacing: -1px; }
-  .home-hero__title-main { font-size: 26px; letter-spacing: -1px; }
+  .home-hero__title-precision { font-size: 29px; letter-spacing: -1.05px; }
+  .home-hero__title-main { font-size: 29px; letter-spacing: -1.05px; }
 }
 @media (max-width: 360px) {
-  .home-hero__title-precision { font-size: 22px; }
-  .home-hero__title-main { font-size: 22px; }
+  .home-hero__title-precision { font-size: 24px; }
+  .home-hero__title-main { font-size: 24px; }
+}
+/* 홈 히어로 CTA — 타이틀이 주인공이 되도록 아웃라인 스타일로 절제 */
+.home-hero .btn-primary {
+  height: 52px;
+  padding: 0 28px;
+  background: transparent;
+  color: var(--c-primary);
+  border: 1.5px solid var(--c-primary);
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.home-hero .btn-primary:hover {
+  background: var(--c-primary-light);
 }
 .home-hero__desc, .intro__desc {
   font-size: 16px;
