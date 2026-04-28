@@ -235,7 +235,8 @@ export function calcHighIncomeStatus({ monthlyIncomeWon, familyCount }) {
 
 /**
  * 자녀별 인정 교육비 합계 (원 단위, 고소득자 전용)
- * - 자녀당 입력 교육비를 한도(장애 없음 20만원 / 장애 있음 50만원)로 클램핑하여 합산
+ * - 공식: per-child  min( max(0, 입력 교육비 − 기준포함분 89,627원), 자녀 한도 )
+ * - 자녀 한도: 장애 없음 20만원 / 장애 있음 50만원
  * - children: [{ monthlyEducationWon, hasDisability }]
  * - 비고소득자는 호출자가 0으로 처리
  */
@@ -244,8 +245,9 @@ export function calcChildrenEducation(children = []) {
   let sum = 0;
   for (const c of children) {
     const monthly = Math.max(0, Number(c?.monthlyEducationWon) || 0);
+    const eligible = Math.max(0, monthly - EDUCATION_BASE_PER_CHILD);
     const limit = c?.hasDisability ? EDUCATION_EXTRA_LIMIT_DISABLED : EDUCATION_EXTRA_LIMIT_NORMAL;
-    sum += Math.min(monthly, limit);
+    sum += Math.min(eligible, limit);
   }
   return sum;
 }
@@ -266,7 +268,11 @@ export function calcMedicalDeduction({ monthlyMedicalWon, familyCount }) {
 /**
  * 고소득자 추가 공제 (의료비 + 교육비)
  * - 비고소득자: 모두 0 (이미 최저생계비에 포함되어 별도 공제 없음)
- * - 고소득자: 의료+교육 합계, 단 한도(고소득자 최저생계비 − 기본 최저생계비)로 클램핑
+ * - 고소득자:
+ *     • 의료비 = max(0, 입력 의료비 − 가구원수별 기준포함분)  ※ 의료비 자체 한도 없음
+ *     • 교육비 = Σ per-child min( max(0, 입력 교육비 − 89,627원), 자녀 한도(일반 20만 / 장애 50만) )
+ *     • 합산 cap = 중위소득 100% − 기본생계비 60% (HIGH_INCOME_LIVING_TABLE − LIVING_EXPENSE_TABLE)
+ *       의료+교육 합산이 cap을 초과하면 cap까지만 인정 (사양: 중위소득 100%까지 인정 가능)
  *
  * @returns {{
  *   isHighIncome: boolean,
@@ -1111,21 +1117,16 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     });
   }
 
-  if (verdictInfo.verdict === VERDICT.CONSULT && disposableIncome <= 0) {
+  // 매월 가용금이 부족하거나(disposableIncome ≤ 0) 청산가치 보장 때문에 변제금이 강제 상향된 경우
+  // 두 개로 나누지 않고 하나의 통합 경고로 안내한다.
+  if (
+    (verdictInfo.verdict === VERDICT.CONSULT && disposableIncome <= 0) ||
+    paymentPlan?.forcedUpward
+  ) {
     warnings.push({
       severity: 'warning',
-      title: '매월 남는 돈이 부족해요',
-      detail: `월 소득에서 가족 생활비(약 ${formatKoreanMoney(livingExpense)})를 빼면 매월 남는 돈이 없어요. 부양가족 확인을 다시 하시거나 소득을 늘리는 방법을 검토해보세요.`,
-    });
-  }
-
-  if (paymentPlan?.forcedUpward) {
-    const requiredMonthly = formatKoreanMoney(paymentPlan.monthlyPayment);
-    const currentAvailable = formatKoreanMoney(disposableIncome);
-    warnings.push({
-      severity: 'warning',
-      title: '월 변제액이 매월 여유 자금을 넘어설 수 있어요',
-      detail: `법원 최소 기준을 맞추려면 매월 ${requiredMonthly}씩 갚아야 합니다. 현재 매월 남는 돈(${currentAvailable})으로는 ${paymentPlan.feasible ? '가능하지만 빠듯하니 전문가 확인을 권장해요' : '부족하므로 생활비 조정이나 소득 증대 같은 조정이 필요해요'}.`,
+      title: '최저생계비를 축소 또는 변제기간을 연장하는 것을 검토하시기 바랍니다.',
+      detail: '개인회생 신청에 있어서 최소 변제금액을 충족하지 못하고 있습니다. 자세한 문의는 전문가와 상의하시기 바랍니다.',
     });
   }
 
@@ -1508,10 +1509,10 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
       id: `debtCause_${code}`,
       title: `채무 발생 원인 안내 — ${c.label}`,
       blocks: [
-        { type: 'p', text: `【법원 입장】 ${c.courtView}` },
-        { type: 'p', text: `【처리방식】 ${c.processing}` },
-        { type: 'p', text: `【참고자료】 ${c.references}` },
-        { type: 'p', text: `【사례】 ${c.examples}` },
+        { type: 'p', text: `【법원 입장】\n${c.courtView}` },
+        { type: 'p', text: `【처리방식】\n${c.processing}` },
+        { type: 'p', text: `【참고자료】\n${c.references}` },
+        { type: 'p', text: `【사례】\n${c.examples}` },
       ],
     });
   });

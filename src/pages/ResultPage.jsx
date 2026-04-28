@@ -26,7 +26,8 @@ import {
   getHousingBaseIncluded,
   getHousingAdditionalLimit,
 } from '../data/regions';
-import { askOverallAnalysis } from '../lib/gemini';
+import { askOverallAnalysis, generateStatementText } from '../lib/gemini';
+import { downloadStatementPdf } from '../lib/statementPdf';
 
 // =========================================================================
 // 판정 스타일
@@ -173,8 +174,11 @@ export default function ResultPage() {
         {/* 개인회생 진행 절차 안내 — 펼침형 */}
         <RehabProcessGuideCard />
 
-        {/* 채무증대 사유서(진술서) 작성 요령 — 펼침형 */}
+        {/* 채무증대 사유서(진술서) 작성 요령 — 펼침형 안내 */}
         <DebtCauseStatementTipCard result={r} />
+
+        {/* 법원 제출용 진술서(채무증대 사유서) AI 자동 작성 + PDF 다운로드 */}
+        <StatementDownloadCard result={r} answers={a} />
 
         {/* 전문가 CTA */}
         <div className="result-cta-section">
@@ -404,7 +408,7 @@ function WarningsCard({ warnings }) {
             <div className="warning-item__badge" style={{ background: s.border }}>{s.icon}</div>
             <div className="warning-item__body">
               <div className="warning-item__title" style={{ color: s.color }}>{w.title}</div>
-              <div className="warning-item__detail" style={{ whiteSpace: 'pre-line' }}>{w.detail}</div>
+              <div className="warning-item__detail" style={{ whiteSpace: 'pre-line' }}>{breakAfterBracketLabel(w.detail)}</div>
             </div>
           </div>
         );
@@ -558,6 +562,12 @@ function ConditionalApprovalCard() {
 // =========================================================================
 // 법원 실무 안내 (가족 구성 기반)
 // =========================================================================
+// 【라벨】, [라벨] 뒤에 본문이 같은 줄에 붙어 있으면 라벨 다음에 줄바꿈을 강제 삽입
+function breakAfterBracketLabel(text) {
+  if (typeof text !== 'string') return text;
+  return text.replace(/(【[^】]+】|\[[^\]]+\])\s*(?!\n)/g, '$1\n');
+}
+
 function NoticesCard({ notices }) {
   return (
     <div className="card">
@@ -568,7 +578,7 @@ function NoticesCard({ notices }) {
           <div className="notice-item__body">
             {(n.blocks || []).map((b, i) => {
               if (b.type === 'p') {
-                return <p key={i} className="notice-p">{b.text}</p>;
+                return <p key={i} className="notice-p">{breakAfterBracketLabel(b.text)}</p>;
               }
               if (b.type === 'ul') {
                 return (
@@ -578,7 +588,7 @@ function NoticesCard({ notices }) {
                 );
               }
               if (b.type === 'note') {
-                return <div key={i} className="notice-note">※ {b.text}</div>;
+                return <div key={i} className="notice-note">※ {breakAfterBracketLabel(b.text)}</div>;
               }
               return null;
             })}
@@ -670,7 +680,7 @@ function PaymentPlanCard({ result, answers }) {
         <Strong>{p.fullMonths}개월간</Strong> 매월 <Strong>{formatKoreanMoney(p.monthlyPayment)}</Strong>씩,
         마지막 1개월은 <Strong>{formatKoreanMoney(p.lastMonthPayment)}</Strong>을 변제하시면,
         총 <Strong>{p.period}개월</Strong>만에 채무 전액(<Strong>{formatKoreanMoney(creditDebt)}</Strong>)을 상환하실 수 있습니다.
-        일반 상환 또는 채무 조정이 더 유리할 수 있으니 <Strong>전문가 상담</Strong>을 받아보시길 권장합니다.
+        일반상환 또는 다른 제도의 채무조정 신청이 더 유리할 수 있으니 <Strong>전문가 상담</Strong>을 받아보시길 권장합니다.
       </>
     );
   } else if (p.forcedUpward) {
@@ -726,8 +736,8 @@ function PaymentPlanCard({ result, answers }) {
         <MetricCard label="변제율"       value={`${(repaymentRate * 100).toFixed(1)}%`} color="var(--c-primary)" />
       </div>
       <div className="metric-row metric-row--primary">
-        <MetricCard label="감면율"       value={`${(exemptionRate * 100).toFixed(1)}%`} color="var(--c-warning)" />
-        <MetricCard label="탕감액"       value={formatKoreanMoney(p.exemption)}         color="var(--c-warning)" />
+        <MetricCard label="감면율"       value={`${(exemptionRate * 100).toFixed(1)}%`} color="#10b981" />
+        <MetricCard label="탕감액"       value={formatKoreanMoney(p.exemption)}         color="#10b981" />
       </div>
 
       <div
@@ -1504,6 +1514,8 @@ function InputSummaryCards({ answers, result, onEdit }) {
           );
         }
 
+        const liquidationOverridesHousing =
+          !!result?.paymentPlan?.forcedUpward && deductionWon > 0;
         const note = (
           <>
             {firstParagraph}
@@ -1511,6 +1523,14 @@ function InputSummaryCards({ answers, result, onEdit }) {
             따라서 본 진단은 {familyCountText}인 가구 최저생계비 {hi(formatKoreanMoneyExact(livingExpenseWon))} + 주거(추가생계비) {hi(formatKoreanMoneyExact(deductionWon))}을 더한 월 {hi(formatKoreanMoneyExact(totalLivingWon))}의 생계비 기준으로 산정되었습니다.
             <br /><br />
             다만, 주거(추가생계비)는 낮은 변제율, 사용처 등 법원의 판단에 따라 인정 여부와 금액이 달라질 수 있으므로, 전액 인정된다는 보장은 없습니다.
+            {liquidationOverridesHousing && (
+              <>
+                <br /><br />
+                <span style={{ color: 'var(--c-warning)', fontWeight: 700 }}>
+                  *{hi('청산가치 보장원칙')}(내 재산 이상 변제해야 하는 원칙)을 충족하기 위해, 주거(추가생계비)는 반영되지 않았습니다.
+                </span>
+              </>
+            )}
           </>
         );
 
@@ -2325,13 +2345,68 @@ function RehabProcessGuideCard() {
 
 
 // =========================================================================
+// 법원 제출용 진술서(채무증대 사유서) — AI 자동 작성 + PDF 다운로드 카드
+// =========================================================================
+function StatementDownloadCard({ result, answers }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const court = result?.court || {};
+  const primaryCourt =
+    court.rehab ||
+    (Array.isArray(court.availableCourts) && court.availableCourts.length > 0
+      ? court.availableCourts[0]
+      : null) ||
+    court.courtName ||
+    '서울회생법원';
+
+  async function handleDownload() {
+    if (loading) return;
+    setLoading(true);
+    setError('');
+    try {
+      const summary = buildModuAISummaryData(result, answers);
+      const text = await generateStatementText(summary, primaryCourt);
+      await downloadStatementPdf(text, '진술서.pdf');
+    } catch (e) {
+      console.error(e);
+      setError('진술서 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 14 }}>
+        📄 진술서 AI 작성본
+      </div>
+      <button
+        type="button"
+        className="btn-primary"
+        onClick={handleDownload}
+        disabled={loading}
+        style={{ width: '100%' }}
+      >
+        {loading ? 'AI가 진술서를 작성 중입니다…' : '진술서 PDF 다운로드'}
+      </button>
+      {error && (
+        <div style={{ marginTop: 10, fontSize: 13, color: '#dc2626', wordBreak: 'keep-all' }}>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// =========================================================================
 // 채무증대 사유서(진술서) 작성 요령 — 펼침형 안내 카드
 // =========================================================================
 function DebtCauseStatementTipCard({ result }) {
   const [open, setOpen] = useState(false);
   const [sampleOpen, setSampleOpen] = useState(false);
 
-  // 1순위 회생법원 결정: court.rehab > availableCourts[0] > courtName
   const court = result?.court || {};
   const primaryCourt =
     court.rehab ||
@@ -2846,6 +2921,7 @@ const LOCAL_CSS = `
   line-height: 1.75;
   margin: 0 0 8px 0;
   word-break: keep-all;
+  white-space: pre-line;
 }
 .notice-p:last-child { margin-bottom: 0; }
 .notice-ul {
@@ -2868,6 +2944,7 @@ const LOCAL_CSS = `
   color: var(--c-text-muted);
   line-height: 1.6;
   word-break: keep-all;
+  white-space: pre-line;
 }
 
 /* 상세 내역 아코디언 (재산·채무) */

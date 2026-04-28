@@ -45,13 +45,12 @@ export default function HomePage() {
     <>
       <div className="home-hero">
         <div style={{ textAlign: 'center' }}>
-          <div className="home-hero__badge">누구나 무료로 3분 만에</div>
           <h1 className="home-hero__title home-hero__title--solution">
             <span className="home-hero__title-precision">초정밀</span>
             <span className="home-hero__title-main">회생 진단 솔루션</span>
           </h1>
           <p className="home-hero__desc">
-            복잡한 서류 없이, 클릭 몇 번으로<br />
+            클릭 몇 번으로<br />
             나의 회생 가능성과 예상 탕감액을 빠르게 확인해 보세요.
           </p>
 
@@ -89,7 +88,7 @@ export default function HomePage() {
       {recentHistory && recentHistory.result && (
         <div style={{ padding: '0 24px', marginBottom: 40 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>이전 내 기록 이어보기</div>
+            <div style={{ fontSize: 18, fontWeight: 800, paddingLeft: 8 }}>이전 내 기록 이어보기</div>
             <button className="btn-ghost" onClick={() => navigate('/history')}>전체 보기 &gt;</button>
           </div>
           <div className="history-card" onClick={handleContinue} style={{ cursor: 'pointer' }}>
