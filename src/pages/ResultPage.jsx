@@ -846,7 +846,7 @@ function MyAssetsCard({ result, answers }) {
     { label: '전세 보증금', v: L.jeonse },
     { label: '월세 보증금', v: L.housingDeposit || 0 },
     { label: '사망보험금', v: L.deathInsurance || 0 },
-    { label: '최근 1년 이내 상속 재산', v: L.inheritance || 0 },
+    { label: '최근 5년 이내 상속 재산', v: L.inheritance || 0 },
     { label: '사업장 임차보증금', v: L.businessRentDeposit || 0 },
     { label: '영업비품 (환가 예상)', v: L.businessEquipment || 0 },
   ].filter((r) => r.v > 0);
@@ -1079,16 +1079,16 @@ function AssetsDetailAccordion({ answers: a, result }) {
     });
   }
 
-  // 8-C. 최근 1년 이내 상속 재산
+  // 8-C. 최근 5년 이내 상속 재산
   if (a.inheritanceReceived === 'yes' && (Number(a.inheritanceAmount) || 0) > 0) {
     const inhW = manwonToWon(Number(a.inheritanceAmount) || 0);
     const finalW = L.inheritance !== undefined ? L.inheritance : inhW;
     blocks.push({
-      title: '최근 1년 이내 상속 재산',
+      title: '최근 5년 이내 상속 재산',
       value: finalW,
       lines: [
         `상속 재산 합계 ${formatKoreanMoney(inhW)} 전액 반영 = ${formatKoreanMoney(finalW)}`,
-        '최근 1년 이내 상속받은 재산은 별도 공제 없이 전액 청산가치(내 재산)에 반영됩니다.',
+        '최근 5년 이내 상속받은 재산은 별도 공제 없이 전액 청산가치(내 재산)에 반영됩니다.',
       ],
     });
   }
@@ -1262,27 +1262,10 @@ function InputSummaryCards({ answers, result, onEdit }) {
       title: '가족 구성',
       editId: 'familyGroup',
       rows: [
-        ['부모 부양', `${a.dependentParents || 0}명`],
         ['결혼 상태', A('maritalStatus')],
         ...(a.maritalStatus === '기혼' ? [['배우자 소득', a.spouseIncome === 'yes' ? '있음' : a.spouseIncome === 'no' ? '없음' : '-']] : []),
-        ['자녀 부양', (() => {
-          const n = Number(a.minorChildren) || 0;
-          if (n === 0) return '0명';
-          const isCoShared = a.maritalStatus === '기혼' && a.spouseIncome === 'yes';
-          const effective = isCoShared ? n * 0.5 : n;
-          return `${Number(effective).toFixed(1).replace(/\.0$/, '')}명`;
-        })()],
-        // 이혼 + 자녀 → 양육비 지급 여부·금액
-        ...(a.maritalStatus === '이혼' && (Number(a.minorChildren) || 0) > 0
-          ? [
-              ['양육비 지급 여부', mapChildSupportStatus(a.childSupportStatus)],
-              ...(a.childSupportStatus === 'paying' || a.childSupportStatus === 'not_paying'
-                ? [['양육비 월액', money('childSupportAmount')]]
-                : []),
-            ]
-          : []),
-        // 기혼 + 자녀 + 맞벌이 → 배우자 월 소득 (참고자료)
-        ...(a.maritalStatus === '기혼' && (Number(a.minorChildren) || 0) > 0 && a.spouseIncome === 'yes'
+        // 기혼 + 맞벌이 → 배우자 월 소득 (참고자료)
+        ...(a.maritalStatus === '기혼' && a.spouseIncome === 'yes'
           ? [['배우자 월 소득', mapSpouseLevel(a.spouseIncomeLevel, money('spouseIncomeCustom'), SPOUSE_INCOME_LABELS)]]
           : []),
         // 기혼 → 배우자 재산·채무 (참고자료)
@@ -1310,15 +1293,45 @@ function InputSummaryCards({ answers, result, onEdit }) {
           a.spouseHealthStatus.some((h) => h && h !== 'no_issue')
           ? [['배우자 부양', '1명']]
           : []),
+      ],
+    },
+    {
+      title: '자녀 부양',
+      editId: 'childrenGroup',
+      rows: [
+        ['자녀 부양', (() => {
+          const n = Number(a.minorChildren) || 0;
+          if (n === 0) return '0명';
+          const isCoShared = a.maritalStatus === '기혼' && a.spouseIncome === 'yes';
+          const effective = isCoShared ? n * 0.5 : n;
+          return `${Number(effective).toFixed(1).replace(/\.0$/, '')}명`;
+        })()],
+        // 이혼 + 자녀 → 양육비 지급 여부·금액
+        ...(a.maritalStatus === '이혼' && (Number(a.minorChildren) || 0) > 0
+          ? [
+              ['양육비 지급 여부', mapChildSupportStatus(a.childSupportStatus)],
+              ...(a.childSupportStatus === 'paying' || a.childSupportStatus === 'not_paying'
+                ? [['양육비 월액', money('childSupportAmount')]]
+                : []),
+            ]
+          : []),
+      ],
+    },
+    {
+      title: '부모 부양',
+      editId: 'parentsGroup',
+      rows: [
+        ['부모 부양', `${a.dependentParents || 0}명`],
         ...(result.familyCount !== undefined
           ? [['부양가족 수 (본인 포함, 산정 결과)', `${Number(result.familyCount).toFixed(1).replace(/\.0$/, '')}명`]]
           : []),
       ],
     },
-    // ---------- 자녀 교육비 / 장애 여부 (미성년 자녀가 있을 때만 표시) ----------
+    // ---------- 자녀 교육비 / 장애 여부 (고소득자 + 미성년 자녀가 있을 때만 표시) ----------
     ...((() => {
       const n = Math.min(4, Number(a.minorChildren) || 0);
       if (n === 0) return [];
+      if (!result.isHighIncome) return [];
       const rows = [];
       const childInputs = [];
       for (let i = 1; i <= n; i += 1) {
@@ -1397,7 +1410,7 @@ function InputSummaryCards({ answers, result, onEdit }) {
 
       return [{
         title: '자녀 교육비',
-        editId: 'familyGroup',
+        editId: 'childrenDetailGroup',
         rows,
         referenceBlock,
       }];
@@ -1583,71 +1596,77 @@ function InputSummaryCards({ answers, result, onEdit }) {
       ],
     }] : []),
     ...((() => {
-      if (!a.inheritanceReceived) return [];
-      const hasInheritance =
+      const hasInheritanceAnswer = a.inheritanceReceived === 'yes' || a.inheritanceReceived === 'no';
+      const hasDeathInsuranceAnswer = a.deathInsuranceReceived === 'yes' || a.deathInsuranceReceived === 'no';
+      if (!hasInheritanceAnswer && !hasDeathInsuranceAnswer) return [];
+      const hasInheritanceAmount =
         a.inheritanceReceived === 'yes' && (Number(a.inheritanceAmount) || 0) > 0;
+      const hasDeathInsuranceAmount =
+        a.deathInsuranceReceived === 'yes' && (Number(a.deathInsuranceAmount) || 0) > 0;
       return [{
-        title: '최근 1년 이내 상속 재산',
+        title: '상속 재산·사망보험금',
         editId: 'inheritanceGroup',
         rows: [
-          ['최근 1년 이내 상속 여부', a.inheritanceReceived === 'yes' ? '예' : '아니오'],
-          ...(hasInheritance ? [['상속 재산 합계', money('inheritanceAmount')]] : []),
+          ...(hasInheritanceAnswer
+            ? [
+                ['최근 5년 이내 상속 여부', a.inheritanceReceived === 'yes' ? '예' : '아니오'],
+                ...(hasInheritanceAmount ? [['상속 재산 합계', money('inheritanceAmount')]] : []),
+              ]
+            : []),
+          ...(hasDeathInsuranceAnswer
+            ? [
+                ['과거 1년 이내 친족 사망보험금 수령 여부', a.deathInsuranceReceived === 'yes' ? '예' : '아니오'],
+                ...(hasDeathInsuranceAmount ? [['사망보험금 수령 합계', money('deathInsuranceAmount')]] : []),
+              ]
+            : []),
         ],
       }];
     })()),
     ...((() => {
       const otherAssets = Array.isArray(a.otherAssets) ? a.otherAssets : [];
       const hasOtherAssets = otherAssets.length > 0 && !otherAssets.includes('none');
-      const hasDeathInsurance =
-        a.deathInsuranceReceived === 'yes' && (Number(a.deathInsuranceAmount) || 0) > 0;
-      if (!hasOtherAssets && !hasDeathInsurance) return [];
+      if (!hasOtherAssets) return [];
 
       return [{
         title: '내 재산 내역',
         editId: 'otherAssets',
         rows: [
-          ...(hasOtherAssets
+          ['선택 항목', otherAssets.map(mapAssetLabel).join(', ')],
+          // 차량 — 사용자 입력값 그대로 (시세·담보대출 분리)
+          ...(otherAssets.includes('vehicle')
             ? [
-                ['선택 항목', otherAssets.map(mapAssetLabel).join(', ')],
-                // 차량 — 사용자 입력값 그대로 (시세·담보대출 분리)
-                ...(otherAssets.includes('vehicle')
-                  ? [
-                      ['차량 시세', money('vehicleValue')],
-                      ['차량 담보대출 잔액', money('vehicleLoan')],
-                      ...(a.vehicleAuction
-                        ? [['공매 처분 여부', a.vehicleAuction === 'yes' ? '예 (공매 처분)' : '아니오 (별제권 유지)']]
-                        : []),
-                    ]
-                  : []),
-                ...(otherAssets.includes('deposit') ? [['예금', money('depositValue')]] : []),
-                ...(otherAssets.includes('savings') ? [['적금', money('savingsValue')]] : []),
-                // 보험 — 사용자 입력값 그대로 (환급금·약관대출 분리)
-                ...(otherAssets.includes('insurance')
-                  ? [
-                      ['보험 해약환급금', a.insuranceKnown === 'no' ? '모름' : money('insuranceValue')],
-                      ...(a.insuranceKnown === 'yes' ? [['보험 약관대출', money('insurancePolicyLoan')]] : []),
-                    ]
-                  : []),
-                ...(otherAssets.includes('account')
-                  ? [
-                      ['청약', money('accountValue')],
-                      ...((Number(a.accountCollateralLoan) || 0) > 0
-                        ? [['청약 담보대출', money('accountCollateralLoan')]]
-                        : []),
-                    ]
-                  : []),
-                ...(otherAssets.includes('stocks') ? [['주식', money('stocksValue')]] : []),
-                ...(otherAssets.includes('crypto') ? [['코인', money('cryptoValue')]] : []),
-                ...(otherAssets.includes('retirement')
-                  ? [
-                      ['퇴직금 유형', mapRetirementType(a.retirementType)],
-                      ...(a.retirementType === 'severance' ? [['예상 퇴직금', money('retirementAmount')]] : []),
-                    ]
+                ['차량 시세', money('vehicleValue')],
+                ['차량 담보대출 잔액', money('vehicleLoan')],
+                ...(a.vehicleAuction
+                  ? [['공매 처분 여부', a.vehicleAuction === 'yes' ? '예 (공매 처분)' : '아니오 (별제권 유지)']]
                   : []),
               ]
             : []),
-          // 사망보험금 — 사용자 입력 수령 합계 그대로
-          ...(hasDeathInsurance ? [['사망보험금 수령 합계', money('deathInsuranceAmount')]] : []),
+          ...(otherAssets.includes('deposit') ? [['예금', money('depositValue')]] : []),
+          ...(otherAssets.includes('savings') ? [['적금', money('savingsValue')]] : []),
+          // 보험 — 사용자 입력값 그대로 (환급금·약관대출 분리)
+          ...(otherAssets.includes('insurance')
+            ? [
+                ['보험 해약환급금', a.insuranceKnown === 'no' ? '모름' : money('insuranceValue')],
+                ...(a.insuranceKnown === 'yes' ? [['보험 약관대출', money('insurancePolicyLoan')]] : []),
+              ]
+            : []),
+          ...(otherAssets.includes('account')
+            ? [
+                ['청약', money('accountValue')],
+                ...((Number(a.accountCollateralLoan) || 0) > 0
+                  ? [['청약 담보대출', money('accountCollateralLoan')]]
+                  : []),
+              ]
+            : []),
+          ...(otherAssets.includes('stocks') ? [['주식', money('stocksValue')]] : []),
+          ...(otherAssets.includes('crypto') ? [['코인', money('cryptoValue')]] : []),
+          ...(otherAssets.includes('retirement')
+            ? [
+                ['퇴직금 유형', mapRetirementType(a.retirementType)],
+                ...(a.retirementType === 'severance' ? [['예상 퇴직금', money('retirementAmount')]] : []),
+              ]
+            : []),
         ],
       }];
     })()),
@@ -1658,7 +1677,8 @@ function InputSummaryCards({ answers, result, onEdit }) {
         ['총 신용채무', money('totalCreditDebt')],
       ],
     },
-    {
+    // ---------- 월 평균 의료비 — 고소득자만 표시 (비고소득자는 입력 자체가 생략됨) ----------
+    ...(!result.isHighIncome ? [] : [{
       title: '월 평균 의료비',
       editId: 'monthlyMedicalExpense',
       rows: [
@@ -1734,7 +1754,7 @@ function InputSummaryCards({ answers, result, onEdit }) {
           note,
         };
       })(),
-    },
+    }]),
     {
       title: '채무 발생 주요 원인',
       editId: 'debtCauses',
@@ -2002,7 +2022,7 @@ function AnalysisReportCard({ result }) {
   } else if (result.verdict === VERDICT.CONSULT) {
     mainBody = (
       <>
-        조건 일부가 충족되지 않아 {hi('단독 신청은 어렵지만')}, 생활비 조정·소득 변동·변제 기간 조정 등 상담을 통해 회생 가능성을 찾을 수 있습니다. 반드시 {hi('전문가 상담')}을 받아보세요.
+        {hi('청산가치를 보장')}하기 위해 귀하의 생계비 조정, 부양가족 축소, 변제기간 연장 등으로 회생 가능성을 찾을 수 있습니다. 반드시 {hi('전문가의 상담')}을 받아보세요.
       </>
     );
   } else if (p && repaymentRate < 0.05) {

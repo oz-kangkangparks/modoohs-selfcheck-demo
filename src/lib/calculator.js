@@ -219,17 +219,39 @@ export function calcDisposableIncome({
 }
 
 /**
+ * 가구원 수(실수 허용)에 따른 고소득자 판정 기준선 (월소득, 원 단위)
+ * - 정수(1~4): 테이블 직조회
+ * - 소수(1.5, 2.5 등): 선형 보간 — calcLivingExpense와 동일 규칙
+ * - 4 초과: 3인→4인 증가분 × 초과인원 적용
+ */
+export function calcHighIncomeThreshold(familyCount) {
+  if (!familyCount || familyCount <= 1) return HIGH_INCOME_THRESHOLD[1];
+
+  if (familyCount <= 4) {
+    const lo = Math.floor(familyCount);
+    const hi = Math.ceil(familyCount);
+    if (lo === hi) return HIGH_INCOME_THRESHOLD[lo];
+    const ratio = familyCount - lo;
+    return Math.round(HIGH_INCOME_THRESHOLD[lo] * (1 - ratio) + HIGH_INCOME_THRESHOLD[hi] * ratio);
+  }
+
+  // 4인 초과: 4인값 + 초과 × (4인 - 3인) 증분
+  const delta = HIGH_INCOME_THRESHOLD[4] - HIGH_INCOME_THRESHOLD[3];
+  return Math.round(HIGH_INCOME_THRESHOLD[4] + (familyCount - 4) * delta);
+}
+
+/**
  * 고소득자 판정 — 본인 합산 월소득(배우자 제외)이 가구원 수별 기준선을 "초과"하면 true
+ * - 가구원 수가 소수(2.5인 등)면 선형 보간 기준선 사용 (calcLivingExpense와 동일 규칙)
  * @param {object} args
  * @param {number} args.monthlyIncomeWon - 본인 합산 월소득 (원 단위)
- * @param {number} args.familyCount - 부양가족 수 (본인 포함)
+ * @param {number} args.familyCount - 부양가족 수 (본인 포함, 실수 허용)
  * @returns {boolean}
  */
 export function calcHighIncomeStatus({ monthlyIncomeWon, familyCount }) {
   const income = Number(monthlyIncomeWon) || 0;
   if (income <= 0) return false;
-  const fc = Math.max(1, Math.min(4, Math.floor(Number(familyCount) || 1)));
-  const threshold = HIGH_INCOME_THRESHOLD[fc];
+  const threshold = calcHighIncomeThreshold(Number(familyCount) || 1);
   return income > threshold;
 }
 
@@ -472,7 +494,7 @@ export function calcDeathInsuranceAsset({ deathInsuranceReceived, deathInsurance
 }
 
 /**
- * 상속 재산 — 최근 1년 이내 상속받은 재산의 시세 합계 (공제 없이 전액 청산가치 반영)
+ * 상속 재산 — 최근 5년 이내 상속받은 재산의 시세 합계 (공제 없이 전액 청산가치 반영)
  */
 export function calcInheritanceAsset({ inheritanceReceived, inheritanceAmount = 0 }) {
   if (inheritanceReceived !== 'yes') return 0;
@@ -657,7 +679,7 @@ export function calcLiquidationValue(answers, { isRehabCourt, jeonseLienOverride
     deathInsuranceAmount: answers.deathInsuranceAmount,
   });
 
-  // 상속 재산 — 최근 1년 이내 상속받은 재산 (공제 없이 전액 반영)
+  // 상속 재산 — 최근 5년 이내 상속받은 재산 (공제 없이 전액 반영)
   const inheritance = calcInheritanceAsset({
     inheritanceReceived: answers.inheritanceReceived,
     inheritanceAmount: answers.inheritanceAmount,
@@ -974,7 +996,8 @@ function calculateSingleScenario(answers, { jeonseLienOverride = null } = {}) {
     : answers.incomeType ? [answers.incomeType] : [];
   const _isJoblessForHi = _incomeTypesForHi.length === 0
     || (_incomeTypesForHi.length === 1 && _incomeTypesForHi[0] === '무직');
-  const monthlyIncomeWon = _isJoblessForHi ? 0 : manwonToWon(Number(answers.monthlyIncome) || 0);
+  // answers.monthlyIncome은 prepareAnswersForCalculator에서 이미 원 단위로 변환됨
+  const monthlyIncomeWon = _isJoblessForHi ? 0 : Number(answers.monthlyIncome) || 0;
   const isHighIncome = calcHighIncomeStatus({ monthlyIncomeWon, familyCount });
 
   // 자녀별 입력값 정규화 (최대 4명, 만원 → 원)

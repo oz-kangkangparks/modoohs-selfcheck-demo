@@ -14,6 +14,28 @@
  *
  * 저장 필드명(answer keys)은 calculator.js가 기대하는 이름을 따름.
  */
+import { calcFamilyCount, calcHighIncomeStatus, manwonToWon } from '../lib/calculator.js';
+
+/**
+ * 현재 답변 상태로부터 고소득자 여부 판정 (showIf용)
+ * - answers의 monthlyIncome은 만원 단위 → manwonToWon으로 환산
+ * - 가구원 수: 본인+배우자(조건부)+자녀(공동/단독)+부모, calcFamilyCount와 동일 규칙
+ */
+function isHighIncomeFromAnswers(a) {
+  const familyCount = calcFamilyCount({
+    maritalStatus: a.maritalStatus,
+    spouseIncome: a.spouseIncome,
+    spouseAssetLevel: a.spouseAssetLevel,
+    spouseDebtLevel: a.spouseDebtLevel,
+    spouseHealthStatus: a.spouseHealthStatus,
+    minorChildren: a.minorChildren,
+    dependentParents: a.dependentParents,
+  });
+  const types = Array.isArray(a.incomeType) ? a.incomeType : a.incomeType ? [a.incomeType] : [];
+  const isJobless = types.length === 0 || (types.length === 1 && types[0] === '무직');
+  const monthlyIncomeWon = isJobless ? 0 : manwonToWon(Number(a.monthlyIncome) || 0);
+  return calcHighIncomeStatus({ monthlyIncomeWon, familyCount });
+}
 
 const questions = [
   // =======================================================
@@ -73,13 +95,14 @@ const questions = [
   },
 
   // =======================================================
-  // 3. 가족 구성 (composite) → 부양가족 자동 산정
+  // 3. 가족 구성 (composite) → 결혼 상태 + 배우자 정보
+  //    자녀/부모/양육비 입력은 별도 그룹(소득 입력 이후)에서 진행
   // =======================================================
   {
     id: 'familyGroup',
     type: 'composite',
     title: '가족 구성을 알려주세요',
-    subtitle: '부양가족 수를 자동으로 산정해드립니다',
+    subtitle: '결혼 상태와 배우자 정보를 입력해주세요',
     fields: [
       {
         field: 'maritalStatus',
@@ -104,119 +127,7 @@ const questions = [
         columns: 2,
         showIf: (a) => a.maritalStatus === '기혼',
       },
-      {
-        field: 'minorChildren',
-        subType: 'stepper',
-        label: '자녀 부양',
-        hint: '성년 자녀는 포함하지 않습니다 (교육비 추가 공제는 4명까지 인정)',
-        min: 0,
-        max: 10,
-      },
-      // ---------- 자녀별 교육비/장애 여부 (최대 4명, 고소득자 추가 공제 산정용) ----------
-      {
-        field: 'child1_monthlyEducation',
-        subType: 'money',
-        label: '자녀 1 — 월 교육비',
-        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 1,
-      },
-      {
-        field: 'child1_hasDisability',
-        subType: 'select',
-        label: '자녀 1 — 신체적·정신적 장애 여부',
-        options: [
-          { value: 'no', label: '아니오' },
-          { value: 'yes', label: '예' },
-        ],
-        columns: 2,
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 1,
-      },
-      {
-        field: 'child2_monthlyEducation',
-        subType: 'money',
-        label: '자녀 2 — 월 교육비',
-        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 2,
-      },
-      {
-        field: 'child2_hasDisability',
-        subType: 'select',
-        label: '자녀 2 — 신체적·정신적 장애 여부',
-        options: [
-          { value: 'no', label: '아니오' },
-          { value: 'yes', label: '예' },
-        ],
-        columns: 2,
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 2,
-      },
-      {
-        field: 'child3_monthlyEducation',
-        subType: 'money',
-        label: '자녀 3 — 월 교육비',
-        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 3,
-      },
-      {
-        field: 'child3_hasDisability',
-        subType: 'select',
-        label: '자녀 3 — 신체적·정신적 장애 여부',
-        options: [
-          { value: 'no', label: '아니오' },
-          { value: 'yes', label: '예' },
-        ],
-        columns: 2,
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 3,
-      },
-      {
-        field: 'child4_monthlyEducation',
-        subType: 'money',
-        label: '자녀 4 — 월 교육비',
-        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 4,
-      },
-      {
-        field: 'child4_hasDisability',
-        subType: 'select',
-        label: '자녀 4 — 신체적·정신적 장애 여부',
-        options: [
-          { value: 'no', label: '아니오' },
-          { value: 'yes', label: '예' },
-        ],
-        columns: 2,
-        showIf: (a) => (Number(a.minorChildren) || 0) >= 4,
-      },
-      {
-        field: 'dependentParents',
-        subType: 'stepper',
-        label: '부모 부양',
-        hint: '연령보다 "실제 부양이 필요한 상태인지"가 기준입니다. 인정 요건·증빙 자료는 도움말을 참고하세요. (0~2명)',
-        min: 0,
-        max: 2,
-      },
-      // ---------- 이혼 + 미성년 자녀 → 양육비 ----------
-      {
-        field: 'childSupportStatus',
-        subType: 'select',
-        label: '자녀 양육비 지급 여부',
-        options: [
-          { value: 'paying', label: '양육비를 지급 중' },
-          { value: 'not_paying', label: '양육비를 지급하지 못함' },
-          { value: 'none_agreed', label: '양육비 지급이 없는 이혼' },
-        ],
-        columns: 1,
-        showIf: (a) => a.maritalStatus === '이혼' && (Number(a.minorChildren) || 0) > 0,
-      },
-      {
-        field: 'childSupportAmount',
-        subType: 'money',
-        label: '양육비 금액 (월)',
-        hint: '이혼확인서·양육비 부담조서상 금액 또는 실제 지급(예정) 월액을 입력하세요',
-        showIf: (a) =>
-          a.maritalStatus === '이혼' &&
-          (Number(a.minorChildren) || 0) > 0 &&
-          (a.childSupportStatus === 'paying' || a.childSupportStatus === 'not_paying'),
-      },
-      // ---------- 기혼 + 미성년 자녀 + 맞벌이 → 배우자 간이조사 ----------
+      // ---------- 기혼 + 맞벌이 → 배우자 월 소득 (참고자료) ----------
       {
         field: 'spouseIncomeLevel',
         subType: 'select',
@@ -229,10 +140,7 @@ const questions = [
           { value: 'custom', label: '그 이상 (직접 입력)' },
         ],
         columns: 2,
-        showIf: (a) =>
-          a.maritalStatus === '기혼' &&
-          (Number(a.minorChildren) || 0) > 0 &&
-          a.spouseIncome === 'yes',
+        showIf: (a) => a.maritalStatus === '기혼' && a.spouseIncome === 'yes',
       },
       {
         field: 'spouseIncomeCustom',
@@ -240,7 +148,6 @@ const questions = [
         label: '배우자 월 소득 (직접 입력)',
         showIf: (a) =>
           a.maritalStatus === '기혼' &&
-          (Number(a.minorChildren) || 0) > 0 &&
           a.spouseIncome === 'yes' &&
           a.spouseIncomeLevel === 'custom',
       },
@@ -306,30 +213,17 @@ const questions = [
       },
     ],
     helpCard: {
-      title: '부양가족, 누구를 포함해야 하나요?',
-      easy: '내가 생활비를 책임지고 있는 가족이 부양가족입니다. 맞벌이라면 자녀 부양은 부부가 나눠서 책임지는 것으로 봅니다.',
+      title: '결혼 상태와 배우자 정보',
+      easy:
+        '결혼 상태와 배우자 정보를 먼저 입력해주세요. 자녀 부양·부모 부양 정보는 다음 단계에서 별도로 입력받습니다.\n\n' +
+        '맞벌이 부부는 자녀 양육을 부부가 나누어 부담하는 것으로 보아, 이후 단계에서 자녀 수가 0.5인으로 환산됩니다.',
       cases: [
-        { q: '맞벌이인데 자녀가 2명이에요', a: '배우자 소득 "있음"을 선택하시고 자녀 2명으로 체크하세요. 부부가 자녀를 나눠 부양하는 것으로 자동 반영됩니다.' },
-        {
-          q: '부모님을 부양하고 있어요 — 어떻게 인정되나요?',
-          a:
-            '법원은 만 65세 이상인지 여부만을 기계적으로 판단하지 않습니다. 핵심은 "현재 실제로 부양의 도움이 필요한 상태인지"입니다.\n\n' +
-            '만 65세 미만이라 하더라도 건강이 좋지 않거나 가족의 간병이 필요해 경제활동이 어려운 상황이라면 충분히 부양가족으로 인정될 수 있습니다. ' +
-            '반대로 만 65세 이상이라 하더라도, 재산과 소득이 충분하고 다른 형제자매의 부양 여력이 채무자보다 더 크다면, 비록 함께 거주하고 있더라도 부양가족으로 인정되기 어려울 수 있습니다.\n\n' +
-            '따라서 실무상으로는 부양 필요성을 뒷받침할 수 있는 객관적인 자료가 매우 중요합니다. 예를 들면 아래와 같은 자료가 필요할 수 있습니다.\n' +
-            '• 부모의 지방세 세목별 과세증명서\n' +
-            '• 부모의 건강보험 자격득실확인서\n' +
-            '• 부모의 병원 진단서 또는 소견서\n' +
-            '• 부모의 병원비 지출내역서\n' +
-            '• 채무자의 양육비 또는 생활비 지급 관련 금융자료\n' +
-            '• 부모의 기초연금 수급 관련 자료 등\n\n' +
-            '즉, 단순히 연령만으로 판단할 것이 아니라 소득·재산·건강상태·실제 부양 여부를 종합적으로 검토하여 결정됩니다.',
-        },
-        { q: '이혼 후 자녀를 혼자 키우고 있어요', a: '이혼을 선택하고 미성년 자녀 수를 입력하시면 단독 양육으로 반영됩니다.' },
+        { q: '배우자 소득이 있으면 자녀 산정에 영향이 있나요?', a: '맞벌이는 배우자가 자녀를 함께 부양하는 것으로 보므로, 이후 자녀 부양 단계에서 자녀 1인당 0.5인으로 환산됩니다.' },
+        { q: '이혼 후 자녀를 혼자 키우고 있어요', a: '이혼을 선택하시고, 다음 단계의 자녀 부양에서 자녀 수를 입력하시면 단독 양육으로 반영됩니다. 양육비 지급 정보도 자녀 단계에서 입력받습니다.' },
       ],
-      tip: '부양가족이 많을수록 법에서 인정하는 최소 생활비가 높아져 월 변제금이 줄어들어요.',
+      tip: '부양가족(자녀·부모)은 다음 단계에서 입력받습니다.',
     },
-    aiSuggestions: ['부모님도 부양가족에 포함되나요?', '배우자 소득이 있으면 왜 자녀가 반만 카운트되나요?'],
+    aiSuggestions: ['배우자 소득이 있으면 왜 자녀가 반만 카운트되나요?', '맞벌이라면 어떻게 입력하나요?'],
   },
 
   // =======================================================
@@ -447,6 +341,230 @@ const questions = [
   },
 
   // =======================================================
+  // 4-2. 자녀 부양 + (이혼 시) 양육비 (composite)
+  //   양육비는 가용소득에서 직접 차감되므로 고소득 여부와 무관 — 자녀 수와 함께 입력
+  // =======================================================
+  {
+    id: 'childrenGroup',
+    type: 'composite',
+    title: '자녀 부양 정보를 알려주세요',
+    subtitle: '부양 중인 미성년 자녀(만 19세 미만) 수를 입력해주세요',
+    fields: [
+      {
+        field: 'minorChildren',
+        subType: 'stepper',
+        label: '자녀 부양',
+        hint: '성년 자녀는 포함하지 않습니다 (교육비 추가 공제는 4명까지 인정)',
+        min: 0,
+        max: 10,
+      },
+      // ---------- 이혼 + 미성년 자녀 → 양육비 ----------
+      {
+        field: 'childSupportStatus',
+        subType: 'select',
+        label: '자녀 양육비 지급 여부',
+        options: [
+          { value: 'paying', label: '양육비를 지급 중' },
+          { value: 'not_paying', label: '양육비를 지급하지 못함' },
+          { value: 'none_agreed', label: '양육비 지급이 없는 이혼' },
+        ],
+        columns: 1,
+        showIf: (a) => a.maritalStatus === '이혼' && (Number(a.minorChildren) || 0) > 0,
+      },
+      {
+        field: 'childSupportAmount',
+        subType: 'money',
+        label: '양육비 금액 (월)',
+        hint: '이혼확인서·양육비 부담조서상 금액 또는 실제 지급(예정) 월액을 입력하세요',
+        showIf: (a) =>
+          a.maritalStatus === '이혼' &&
+          (Number(a.minorChildren) || 0) > 0 &&
+          (a.childSupportStatus === 'paying' || a.childSupportStatus === 'not_paying'),
+      },
+    ],
+    helpCard: {
+      title: '자녀 부양은 어떻게 인정되나요?',
+      easy:
+        '미성년 자녀(만 19세 미만)만 입력합니다. 맞벌이 부부의 경우 자녀를 부부가 함께 부양하는 것으로 보아 자녀 1인당 0.5인으로 환산됩니다.',
+      cases: [
+        { q: '맞벌이인데 자녀가 2명이에요', a: '앞 단계에서 배우자 소득 "있음"을 선택하셨다면, 자녀 2명을 입력해도 부부 공동 부양으로 0.5명씩 환산되어 본인 부양분은 1명으로 계산됩니다.' },
+        { q: '이혼 후 자녀를 혼자 키우고 있어요', a: '앞 단계에서 이혼을 선택하셨다면 자녀 수를 그대로 입력하시면 됩니다. 단독 양육으로 자녀 수 전부가 본인 부양분으로 반영됩니다.' },
+        { q: '이혼 후 양육비를 지급/수령하고 있어요', a: '자녀 수를 입력하시면 양육비 입력란이 함께 표시됩니다. 양육비는 가용소득 계산에서 직접 차감됩니다.' },
+      ],
+      tip: '자녀가 0명이라면 그대로 두고 다음 단계로 진행하세요.',
+    },
+    aiSuggestions: ['배우자 소득이 있으면 왜 자녀가 반만 카운트되나요?', '성년 자녀도 부양 중인데 입력해야 하나요?'],
+  },
+
+  // =======================================================
+  // 4-3. 부모 부양 (composite)
+  // =======================================================
+  {
+    id: 'parentsGroup',
+    type: 'composite',
+    title: '부모 부양 정보를 알려주세요',
+    subtitle: '실제로 부양 중인 부모님 수를 입력해주세요',
+    fields: [
+      {
+        field: 'dependentParents',
+        subType: 'stepper',
+        label: '부모 부양',
+        hint: '연령보다 "실제 부양이 필요한 상태인지"가 기준입니다. 인정 요건·증빙 자료는 도움말을 참고하세요. (0~2명)',
+        min: 0,
+        max: 2,
+      },
+    ],
+    helpCard: {
+      title: '부모님을 부양하고 있어요 — 어떻게 인정되나요?',
+      easy:
+        '법원은 만 65세 이상인지 여부만을 기계적으로 판단하지 않습니다. 핵심은 "현재 실제로 부양의 도움이 필요한 상태인지"입니다.\n\n' +
+        '만 65세 미만이라 하더라도 건강이 좋지 않거나 가족의 간병이 필요해 경제활동이 어려운 상황이라면 충분히 부양가족으로 인정될 수 있습니다. ' +
+        '반대로 만 65세 이상이라 하더라도, 재산과 소득이 충분하고 다른 형제자매의 부양 여력이 채무자보다 더 크다면, 비록 함께 거주하고 있더라도 부양가족으로 인정되기 어려울 수 있습니다.\n\n' +
+        '따라서 실무상으로는 부양 필요성을 뒷받침할 수 있는 객관적인 자료가 매우 중요합니다. 예를 들면 아래와 같은 자료가 필요할 수 있습니다.\n' +
+        '• 부모의 지방세 세목별 과세증명서\n' +
+        '• 부모의 건강보험 자격득실확인서\n' +
+        '• 부모의 병원 진단서 또는 소견서\n' +
+        '• 부모의 병원비 지출내역서\n' +
+        '• 채무자의 양육비 또는 생활비 지급 관련 금융자료\n' +
+        '• 부모의 기초연금 수급 관련 자료 등\n\n' +
+        '즉, 단순히 연령만으로 판단할 것이 아니라 소득·재산·건강상태·실제 부양 여부를 종합적으로 검토하여 결정됩니다.',
+      tip: '부양 필요성을 뒷받침할 객관적 자료를 미리 준비해두시면 좋습니다.',
+    },
+    aiSuggestions: ['부모님도 부양가족에 포함되나요?', '부양 인정 자료는 무엇이 필요한가요?'],
+  },
+
+  // =======================================================
+  // 4-4. 자녀별 교육비·장애 여부 — 고소득자 + 자녀 1명 이상일 때만 노출
+  //   부모 부양까지 입력되어 가구원 수가 확정된 시점에 고소득자 여부 판정
+  //   비고소득자에게는 교육비 추가 공제가 적용되지 않으므로 입력 자체를 생략
+  // =======================================================
+  {
+    id: 'childrenDetailGroup',
+    type: 'composite',
+    title: '자녀별 교육비와 장애 여부를 알려주세요',
+    subtitle:
+      '입력하신 가구원 수와 월 소득 기준 고소득자에 해당하므로 교육비·의료비 추가 공제가 가능합니다. ' +
+      '자녀 1인당 월 교육비(학원·교습비 등)와 장애 여부를 입력해주세요.',
+    showIf: (a) => (Number(a.minorChildren) || 0) >= 1 && isHighIncomeFromAnswers(a),
+    fields: [
+      // ---------- 자녀별 교육비/장애 여부 (최대 4명, 고소득자 추가 공제 산정용) ----------
+      {
+        field: 'child1_monthlyEducation',
+        subType: 'money',
+        label: '자녀 1 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 1,
+      },
+      {
+        field: 'child1_hasDisability',
+        subType: 'select',
+        label: '자녀 1 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 1,
+      },
+      {
+        field: 'child2_monthlyEducation',
+        subType: 'money',
+        label: '자녀 2 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 2,
+      },
+      {
+        field: 'child2_hasDisability',
+        subType: 'select',
+        label: '자녀 2 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 2,
+      },
+      {
+        field: 'child3_monthlyEducation',
+        subType: 'money',
+        label: '자녀 3 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 3,
+      },
+      {
+        field: 'child3_hasDisability',
+        subType: 'select',
+        label: '자녀 3 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 3,
+      },
+      {
+        field: 'child4_monthlyEducation',
+        subType: 'money',
+        label: '자녀 4 — 월 교육비',
+        hint: '학원·교습비·등록금 등 매월 지출되는 교육비 (만원 단위)',
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 4,
+      },
+      {
+        field: 'child4_hasDisability',
+        subType: 'select',
+        label: '자녀 4 — 신체적·정신적 장애 여부',
+        options: [
+          { value: 'yes', label: '예' },
+          { value: 'no', label: '아니오' },
+        ],
+        columns: 2,
+        showIf: (a) => (Number(a.minorChildren) || 0) >= 4,
+      },
+    ],
+    helpCard: {
+      title: '자녀 교육비와 장애 여부는 왜 묻나요?',
+      easy:
+        '입력하신 가구원 수와 월 소득 기준 고소득자에 해당하므로 자녀 교육비를 "추가 인정 한도" 내에서 가용소득에서 추가로 공제받을 수 있습니다.\n\n' +
+        '자녀 1인당 추가 인정 한도는 월 20만원이며, 신체적·정신적 장애가 있는 경우 월 50만원까지 인정됩니다.',
+      cases: [
+        { q: '교육비가 없거나 매우 적어요', a: '0원으로 두셔도 됩니다. 추가 인정 한도 산정에 영향만 줄 뿐입니다.' },
+        { q: '장애가 있는 자녀가 있어요', a: '"예"를 선택하시면 추가 인정 한도가 월 20만원에서 월 50만원으로 상향됩니다.' },
+      ],
+      tip: '자녀 5명 이상은 입력란이 4명까지만 제공됩니다 (실무상 추가 공제는 4명까지 인정).',
+    },
+  },
+
+  // =======================================================
+  // 4-5. 월 평균 의료비 (고소득자 추가 공제 산정용) — 고소득자만 노출
+  // =======================================================
+  {
+    id: 'monthlyMedicalExpense',
+    type: 'money',
+    field: 'monthlyMedicalExpense',
+    title: '최근 1년 이내 지속적으로 발생한 월 평균 의료비를 입력해주세요',
+    subtitle:
+      '입력하신 가구원 수와 월 소득 기준 고소득자에 해당하므로 의료비 추가 공제가 가능합니다. ' +
+      '본인·배우자·자녀·부모 등 부양가족 모두의 월 평균 의료비 합계를 만원 단위로 입력해주세요. ' +
+      '지속적이란 입원, 주기적 통원치료처럼 1~2회성이 아닌 정기 지출을 의미합니다.',
+    unit: '만원',
+    validation: { required: false, min: 0 },
+    showIf: (a) => isHighIncomeFromAnswers(a),
+    helpCard: {
+      title: '의료비는 어떻게 인정되나요?',
+      easy:
+        '최근 1년간 지속적으로 발생한 의료비를 12로 나눈 월 평균 금액을 입력하면 됩니다. ' +
+        '병원 입원, 정기적인 통원·약 처방, 만성질환·자폐 등 지속 치료가 해당되며, ' +
+        '한두 번의 단발성 진료는 포함하지 않습니다.',
+      cases: [
+        { q: '의료비 합산 기준은?', a: '본인·배우자·자녀·부모 등 부양가족 전체의 월 평균 의료비 합계를 입력합니다.' },
+        { q: '왜 입력해야 하나요?', a: '고소득자에 해당하는 경우 의료비·교육비 등은 추가 인정 한도 내에서 가용소득에서 추가로 공제받을 수 있습니다.' },
+      ],
+      tip: '단순한 일반 진료비·감기약 구입비처럼 1~2회성 지출은 포함하지 않습니다.',
+    },
+    aiSuggestions: ['지속적인 의료비란 뭔가요?', '가족 의료비도 포함되나요?'],
+  },
+
+  // =======================================================
   // 5. 주거 형태 + 월세 (composite)
   // =======================================================
   {
@@ -508,7 +626,7 @@ const questions = [
         subType: 'money',
         label: 'KB시세 또는 네이버 부동산 기준 시세',
         hint: '정확한 감정가가 아니어도 대략적인 시세면 충분합니다.',
-        notice: '최근 1년 이내에 상속받은 부동산이 있다면, 해당 부동산을 제외한 금액으로 입력해주세요.',
+        notice: '최근 5년 이내에 상속받은 부동산이 있다면, 해당 부동산을 제외한 금액으로 입력해주세요.',
       },
       {
         field: 'realEstateMortgage',
@@ -664,7 +782,7 @@ const questions = [
     field: 'otherAssets',
     title: '그 외 보유 재산을 선택해주세요',
     subtitle: '해당되는 항목을 모두 선택 (없으면 "없음")',
-    notice: '최근 1년 이내에 상속받은 재산이 있다면, 해당 재산을 제외하고 선택·입력해주세요.',
+    notice: '최근 5년 이내에 상속받은 재산이 있다면, 해당 재산을 제외하고 선택·입력해주세요.',
     options: [
       { value: 'vehicle', label: '차량', desc: '자동차·오토바이 (본인 명의)' },
       { value: 'deposit', label: '예금', desc: '은행 예금 잔액' },
@@ -826,17 +944,18 @@ const questions = [
   },
 
   // =======================================================
-  // 10-A. 최근 1년 이내 상속 재산 — 항상 노출
+  // 10. 상속 재산(최근 5년 이내) + 친족 사망보험금(과거 1년 이내) — 항상 노출
   // =======================================================
   {
     id: 'inheritanceGroup',
     type: 'composite',
-    title: '최근 1년 이내 상속 재산 여부',
-    subtitle: '최근 1년 이내에 상속받은 재산이 있으신가요?',
+    title: '최근 5년 이내 상속 재산·사망보험금 수령 여부',
+    subtitle: '최근 5년 이내 상속받은 재산과 과거 1년 이내 친족 사망보험금 수령 여부를 입력해주세요',
     fields: [
       {
         field: 'inheritanceReceived',
         subType: 'select',
+        label: '최근 5년 이내 상속받은 재산이 있으신가요?',
         options: [
           { value: 'yes', label: '예' },
           { value: 'no', label: '아니오' },
@@ -850,33 +969,10 @@ const questions = [
         hint: '부동산 및 차량, 임야, 대지 등 아는 범위 내에서 시세를 입력하세요.',
         showIf: (a) => a.inheritanceReceived === 'yes',
       },
-    ],
-    helpCard: {
-      title: '상속받은 재산은 왜 따로 입력하나요?',
-      easy:
-        '최근 1년 이내에 상속받은 재산은 회생 실무상 별도로 평가됩니다. 부동산 시세나 차량·기타 재산을 입력하실 때는 상속받은 부분을 빼고 입력하신 뒤, 이 항목에서 상속받은 재산의 시세를 별도로 합산해 입력해주세요.',
-      cases: [
-        { q: '정확한 시세를 모르겠어요', a: '아는 범위 내에서 대략적인 시세를 입력하시면 됩니다. 부동산은 KB부동산·네이버 부동산, 차량은 SK엔카·K Car 등에서 확인하실 수 있습니다.' },
-        { q: '여러 건을 상속받았어요', a: '부동산·차량·임야·대지 등 모든 상속 재산의 시세를 합산한 총액을 입력해주세요.' },
-        { q: '1년 이전에 상속받은 건?', a: '자가진단은 최근 1년 이내 상속분만 별도로 분리합니다. 1년 이전 상속분은 일반 재산 항목에 포함하시면 됩니다.' },
-      ],
-      tip: '최근 1년 이내 상속받은 재산이 없다면 "아니오"만 선택하시면 됩니다.',
-    },
-  },
-
-  // =======================================================
-  // 10-B. 사망보험금 (과거 1년 이내 수령 여부) — 항상 노출
-  // =======================================================
-  {
-    id: 'deathInsuranceGroup',
-    type: 'composite',
-    title: '친족 사망보험금 수령 여부',
-    subtitle: '과거 1년 이내에 친족 사망보험금을 받으신 적이 있나요?',
-    fields: [
       {
         field: 'deathInsuranceReceived',
         subType: 'select',
-        label: '과거 1년 이내 친족 사망보험금 수령 여부',
+        label: '과거 1년 이내 친족 사망보험금을 수령하신 적이 있나요?',
         options: [
           { value: 'yes', label: '예' },
           { value: 'no', label: '아니오' },
@@ -894,17 +990,19 @@ const questions = [
       },
     ],
     helpCard: {
-      title: '친족 사망보험금이 왜 재산에 포함되나요?',
+      title: '상속 재산·사망보험금은 왜 따로 입력하나요?',
       easy:
-        '과거 1년 이내에 친족(배우자·부모·자녀·형제자매 등 피보험자) 사망으로 수령한 사망보험금은 회생 실무상 재산으로 평가됩니다.\n\n' +
-        '현재 보험에 가입하지 않으셨더라도 과거 1년 이내 친족 사망으로 보험금을 수령한 이력이 있다면 "예"를 선택하고 금액을 입력해주세요.',
+        '최근 5년 이내에 상속받은 재산은 회생 실무상 별도로 평가됩니다. 부동산 시세나 차량·기타 재산을 입력하실 때는 상속받은 부분을 빼고 입력하신 뒤, 이 항목에서 상속받은 재산의 시세를 별도로 합산해 입력해주세요.\n\n' +
+        '또한 과거 1년 이내에 친족(배우자·부모·자녀·형제자매 등 피보험자) 사망으로 수령한 사망보험금은 회생 실무상 재산으로 평가됩니다. 현재 보험에 가입하지 않으셨더라도 과거 1년 이내 친족 사망으로 보험금을 수령한 이력이 있다면 "예"를 선택하고 금액을 입력해주세요.',
       cases: [
-        { q: '친족의 범위는 어디까지인가요?', a: '일반적으로 배우자, 부모(시부모·장인·장모 포함), 자녀, 형제자매 등 가까운 가족을 말합니다. 수익자로 지정되어 실제로 수령한 보험금이라면 모두 해당합니다.' },
-        { q: '여러 건의 사망보험금을 받았어요', a: '여러 건을 모두 합산한 총액을 입력해주세요. 예: 5,000만원 + 1억 = 1억 5,000만원 입력.' },
-        { q: '1년 이전에 받은 건?', a: '자가진단은 과거 1년 이내 수령분만 대상으로 합니다. 1년 이전 수령분은 제외하세요.' },
-        { q: '보험을 현재 보유하지 않아도 입력해야 하나요?', a: '네, 현재 본인 명의 보험에 가입하지 않았더라도 과거 1년 이내 친족 사망으로 보험금을 수령한 이력이 있다면 입력해주세요.' },
+        { q: '정확한 시세를 모르겠어요', a: '아는 범위 내에서 대략적인 시세를 입력하시면 됩니다. 부동산은 KB부동산·네이버 부동산, 차량은 SK엔카·K Car 등에서 확인하실 수 있습니다.' },
+        { q: '상속을 여러 건 받았어요', a: '부동산·차량·임야·대지 등 모든 상속 재산의 시세를 합산한 총액을 입력해주세요.' },
+        { q: '5년 이전에 상속받은 건?', a: '자가진단은 최근 5년 이내 상속분만 별도로 분리합니다. 5년 이전 상속분은 일반 재산 항목에 포함하시면 됩니다.' },
+        { q: '친족 사망보험금의 범위는 어디까지인가요?', a: '일반적으로 배우자, 부모(시부모·장인·장모 포함), 자녀, 형제자매 등 가까운 가족을 말합니다. 수익자로 지정되어 실제로 수령한 보험금이라면 모두 해당합니다.' },
+        { q: '사망보험금을 여러 건 받았어요', a: '여러 건을 모두 합산한 총액을 입력해주세요. 예: 5,000만원 + 1억 = 1억 5,000만원 입력.' },
+        { q: '1년 이전에 받은 사망보험금은?', a: '자가진단은 과거 1년 이내 수령분만 대상으로 합니다. 1년 이전 수령분은 제외하세요.' },
       ],
-      tip: '과거 1년 이내 친족 사망보험금 수령 이력이 없다면 "아니오"만 선택하시면 됩니다.',
+      tip: '해당 사항이 없다면 각 항목에서 "아니오"만 선택하시면 됩니다.',
     },
   },
 
@@ -967,34 +1065,6 @@ const questions = [
       tip: '"올크레딧", "나이스지키미" 같은 신용정보 서비스에서 내 대출·카드값 총액을 무료로 조회하실 수 있어요.',
     },
     aiSuggestions: ['담보대출이랑 신용대출 차이', '전세대출도 여기에 포함되나요?'],
-  },
-
-  // =======================================================
-  // 12-2. 월 평균 의료비 (고소득자 추가 공제 산정용)
-  // =======================================================
-  {
-    id: 'monthlyMedicalExpense',
-    type: 'money',
-    field: 'monthlyMedicalExpense',
-    title: '최근 1년 이내 지속적으로 발생한 월 평균 의료비를 입력해주세요',
-    subtitle:
-      '지속적이란 입원, 주기적 통원치료처럼 1~2회성이 아닌 정기 지출을 의미합니다. ' +
-      '본인·배우자·자녀·부모 등 부양가족 모두의 의료비 합계를 만원 단위로 입력해주세요.',
-    unit: '만원',
-    validation: { required: false, min: 0 },
-    helpCard: {
-      title: '의료비는 어떻게 인정되나요?',
-      easy:
-        '최근 1년간 지속적으로 발생한 의료비를 12로 나눈 월 평균 금액을 입력하면 됩니다. ' +
-        '병원 입원, 정기적인 통원·약 처방, 만성질환·자폐 등 지속 치료가 해당되며, ' +
-        '한두 번의 단발성 진료는 포함하지 않습니다.',
-      cases: [
-        { q: '의료비 합산 기준은?', a: '본인·배우자·자녀·부모 등 부양가족 전체의 월 평균 의료비 합계를 입력합니다.' },
-        { q: '왜 입력해야 하나요?', a: '고소득자에 해당하는 경우 의료비·교육비 등은 추가 인정 한도 내에서 가용소득에서 추가로 공제받을 수 있습니다.' },
-      ],
-      tip: '단순한 일반 진료비·감기약 구입비처럼 1~2회성 지출은 포함하지 않습니다.',
-    },
-    aiSuggestions: ['지속적인 의료비란 뭔가요?', '가족 의료비도 포함되나요?'],
   },
 
   // =======================================================
